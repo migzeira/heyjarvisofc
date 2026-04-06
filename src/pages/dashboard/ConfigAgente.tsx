@@ -55,7 +55,6 @@ export default function ConfigAgente() {
   const [newReply, setNewReply] = useState("");
 
   useEffect(() => { if (user) loadData(); }, [user]);
-  useEffect(() => { if (session?.access_token) loadCredentials(); }, [session]);
 
   const loadCredentials = async () => {
     try {
