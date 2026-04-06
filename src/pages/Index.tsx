@@ -1068,7 +1068,7 @@ export default function Index() {
                 items: ["Sincronização em tempo real","Lembretes no Google","Acesse em qualquer device"],
               },
               {
-                icon: Table2, color: "text-emerald-400", bg: "from-emerald-500/15 to-emerald-500/5", border: "border-emerald-500/25",
+                image: googleSheetsImg, color: "text-emerald-400", bg: "from-emerald-500/15 to-emerald-500/5", border: "border-emerald-500/25",
                 title: "Google Sheets",
                 desc: "Cada transação registrada no WhatsApp vai direto pra sua planilha. Seus dados sempre atualizados, prontos pra você usar.",
                 items: ["Exportação automática","Planilha sempre atualizada","Use suas próprias fórmulas"],
