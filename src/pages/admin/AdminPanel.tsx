@@ -279,13 +279,7 @@ export default function AdminPanel() {
     setSavingSettings(false);
   };
 
-  // Reload on filter/page changes
-  useEffect(() => { if (!loading && isAdmin) loadConversations(); }, [convsPage, dateRange]);
-  useEffect(() => { if (!loading && isAdmin) loadMessages(); }, [msgsPage, dateRange]);
-  useEffect(() => { if (!loading && isAdmin) loadTransactions(); }, [txPage, dateRange]);
-  useEffect(() => { if (!loading && isAdmin) loadPayments(); }, [payPage]);
-  useEffect(() => { if (!loading && isAdmin) loadErrorLogs(); }, [errPage, errContextFilter]);
-  useEffect(() => { if (!loading && isAdmin) loadProfiles(); }, [usersPage]);
+
 
   const filteredProfiles = profiles.filter(p => {
     const matchSearch = !userSearch || (p.display_name || "").toLowerCase().includes(userSearch.toLowerCase());
