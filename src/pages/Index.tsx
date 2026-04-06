@@ -1103,7 +1103,7 @@ export default function Index() {
             <div className="mt-8 text-center">
               <Button asChild
                 className="bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-500 hover:to-purple-500 text-white rounded-xl shadow-lg shadow-violet-500/25 hover:-translate-y-px transition-all duration-200 h-11 px-7 font-semibold">
-                <Link to="/signup">Assinar agora <ArrowRight className="w-4 h-4 ml-2" /></Link>
+                <a href="#planos">Assinar agora <ArrowRight className="w-4 h-4 ml-2" /></a>
               </Button>
             </div>
           </AnimateIn>
