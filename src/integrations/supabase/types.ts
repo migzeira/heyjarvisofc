@@ -18,6 +18,7 @@ export type Database = {
         Row: {
           agent_name: string
           created_at: string
+          greeting_message: string | null
           id: string
           is_active: boolean
           language: string
@@ -26,6 +27,11 @@ export type Database = {
           module_finance: boolean
           module_notes: boolean
           system_prompt: string | null
+          template_event: string | null
+          template_expense: string | null
+          template_expense_multi: string | null
+          template_income: string | null
+          template_note: string | null
           tone: string
           updated_at: string
           user_id: string
@@ -33,6 +39,7 @@ export type Database = {
         Insert: {
           agent_name?: string
           created_at?: string
+          greeting_message?: string | null
           id?: string
           is_active?: boolean
           language?: string
@@ -41,6 +48,11 @@ export type Database = {
           module_finance?: boolean
           module_notes?: boolean
           system_prompt?: string | null
+          template_event?: string | null
+          template_expense?: string | null
+          template_expense_multi?: string | null
+          template_income?: string | null
+          template_note?: string | null
           tone?: string
           updated_at?: string
           user_id: string
@@ -48,6 +60,7 @@ export type Database = {
         Update: {
           agent_name?: string
           created_at?: string
+          greeting_message?: string | null
           id?: string
           is_active?: boolean
           language?: string
@@ -56,6 +69,11 @@ export type Database = {
           module_finance?: boolean
           module_notes?: boolean
           system_prompt?: string | null
+          template_event?: string | null
+          template_expense?: string | null
+          template_expense_multi?: string | null
+          template_income?: string | null
+          template_note?: string | null
           tone?: string
           updated_at?: string
           user_id?: string
@@ -240,6 +258,53 @@ export type Database = {
           },
         ]
       }
+      kirvano_payments: {
+        Row: {
+          amount: number | null
+          created_at: string
+          email: string
+          id: string
+          kirvano_order_id: string
+          name: string | null
+          phone: string | null
+          plan: string
+          status: string
+          user_id: string | null
+        }
+        Insert: {
+          amount?: number | null
+          created_at?: string
+          email: string
+          id?: string
+          kirvano_order_id: string
+          name?: string | null
+          phone?: string | null
+          plan?: string
+          status: string
+          user_id?: string | null
+        }
+        Update: {
+          amount?: number | null
+          created_at?: string
+          email?: string
+          id?: string
+          kirvano_order_id?: string
+          name?: string | null
+          phone?: string | null
+          plan?: string
+          status?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "kirvano_payments_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       messages: {
         Row: {
           content: string
@@ -318,34 +383,43 @@ export type Database = {
           created_at: string
           display_name: string | null
           id: string
+          link_code: string | null
+          link_code_expires_at: string | null
           messages_limit: number
           messages_used: number
           phone_number: string | null
           plan: string
           timezone: string
           updated_at: string
+          whatsapp_lid: string | null
         }
         Insert: {
           created_at?: string
           display_name?: string | null
           id: string
+          link_code?: string | null
+          link_code_expires_at?: string | null
           messages_limit?: number
           messages_used?: number
           phone_number?: string | null
           plan?: string
           timezone?: string
           updated_at?: string
+          whatsapp_lid?: string | null
         }
         Update: {
           created_at?: string
           display_name?: string | null
           id?: string
+          link_code?: string | null
+          link_code_expires_at?: string | null
           messages_limit?: number
           messages_used?: number
           phone_number?: string | null
           plan?: string
           timezone?: string
           updated_at?: string
+          whatsapp_lid?: string | null
         }
         Relationships: []
       }
@@ -374,6 +448,57 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "quick_replies_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      reminders: {
+        Row: {
+          created_at: string
+          event_id: string | null
+          id: string
+          message: string
+          send_at: string
+          sent_at: string | null
+          status: string
+          user_id: string
+          whatsapp_number: string
+        }
+        Insert: {
+          created_at?: string
+          event_id?: string | null
+          id?: string
+          message: string
+          send_at: string
+          sent_at?: string | null
+          status?: string
+          user_id: string
+          whatsapp_number: string
+        }
+        Update: {
+          created_at?: string
+          event_id?: string | null
+          id?: string
+          message?: string
+          send_at?: string
+          sent_at?: string | null
+          status?: string
+          user_id?: string
+          whatsapp_number?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reminders_event_id_fkey"
+            columns: ["event_id"]
+            isOneToOne: false
+            referencedRelation: "events"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reminders_user_id_fkey"
             columns: ["user_id"]
             isOneToOne: false
             referencedRelation: "profiles"
@@ -418,6 +543,47 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "transactions_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      whatsapp_sessions: {
+        Row: {
+          created_at: string
+          id: string
+          last_activity: string
+          last_processed_id: string | null
+          pending_action: string | null
+          pending_context: Json | null
+          phone_number: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          last_activity?: string
+          last_processed_id?: string | null
+          pending_action?: string | null
+          pending_context?: Json | null
+          phone_number: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          last_activity?: string
+          last_processed_id?: string | null
+          pending_action?: string | null
+          pending_context?: Json | null
+          phone_number?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "whatsapp_sessions_user_id_fkey"
             columns: ["user_id"]
             isOneToOne: false
             referencedRelation: "profiles"
