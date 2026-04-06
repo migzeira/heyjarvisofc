@@ -622,14 +622,9 @@ function PricingSection() {
 
         <AnimateIn from="scale" delay={80}>
           <div className="relative rounded-2xl border border-violet-500/40 bg-[#0d0d1a] overflow-hidden shadow-2xl shadow-violet-500/10">
-            <div className="bg-gradient-to-r from-violet-600 to-purple-600 px-6 py-3 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-white" />
-                <span className="text-[13px] font-bold text-white">Minha Maya Completo</span>
-              </div>
-              <span className="text-[11px] bg-white/20 text-white px-2.5 py-1 rounded-full font-medium">
-                Oferta de lançamento
-              </span>
+            <div className="bg-gradient-to-r from-violet-600 to-purple-600 px-6 py-3 flex items-center justify-center gap-2">
+              <Sparkles className="w-4 h-4 text-white" />
+              <span className="text-[13px] font-bold text-white tracking-wide">Minha Maya Completo</span>
             </div>
 
             <div className="p-8">
