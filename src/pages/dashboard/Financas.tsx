@@ -133,7 +133,7 @@ export default function Financas() {
       acc[t.category] = (acc[t.category] || 0) + Number(t.amount);
       return acc;
     }, {})
-  ).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
+  ).map(([name, value]) => ({ name, value: value as number })).sort((a, b) => (b.value as number) - (a.value as number));
 
   // Monthly trend (last 6 months)
   const now = new Date();
