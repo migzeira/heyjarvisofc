@@ -1,5 +1,6 @@
-import { Home, Wallet, CalendarDays, StickyNote, MessageSquare, Link2, Settings, BarChart3, User, LogOut, MessageCircle, Menu, Shield, Bell } from "lucide-react";
+import { Home, Wallet, CalendarDays, StickyNote, MessageSquare, Link2, Settings, BarChart3, User, LogOut, Menu, Shield, Bell } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
+import logoEscrita from "@/assets/logo_escrita.png";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
