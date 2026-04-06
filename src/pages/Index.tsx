@@ -581,7 +581,7 @@ function PricingSection() {
   const link = annual
     ? "https://pay.kirvano.com/59bde07b-9a4a-41a6-9009-48bb1e37c364"
     : "https://pay.kirvano.com/4a308234-3702-4233-9d2a-4dce73bf0d2b";
-  const subtext = annual ? "Equivale a R$23,92/mês — economia de 76%!" : "Menos de R$1 por dia";
+  const subtext = annual ? "Equivale a R$23,92/mês" : "Menos de R$1 por dia";
 
   return (
     <section id="planos" className="py-28 px-4">
