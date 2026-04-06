@@ -97,6 +97,14 @@ export default function AdminPanel() {
   // Sparkline data
   const [dailyUsers, setDailyUsers] = useState<number[]>([]);
 
+  // Reload on filter/page changes
+  useEffect(() => { if (!loading && isAdmin) loadConversations(); }, [convsPage, dateRange]);
+  useEffect(() => { if (!loading && isAdmin) loadMessages(); }, [msgsPage, dateRange]);
+  useEffect(() => { if (!loading && isAdmin) loadTransactions(); }, [txPage, dateRange]);
+  useEffect(() => { if (!loading && isAdmin) loadPayments(); }, [payPage]);
+  useEffect(() => { if (!loading && isAdmin) loadErrorLogs(); }, [errPage, errContextFilter]);
+  useEffect(() => { if (!loading && isAdmin) loadProfiles(); }, [usersPage]);
+
   useEffect(() => {
     if (isAdmin) loadData();
   }, [isAdmin]);
