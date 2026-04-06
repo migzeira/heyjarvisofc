@@ -227,6 +227,40 @@ export default function ConfigAgente() {
         </CardContent>
       </Card>
 
+      <Card className="bg-card border-border">
+        <CardHeader>
+          <CardTitle className="text-base flex items-center gap-2">
+            <MessageSquare className="h-4 w-4" /> Mensagens do Assistente
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {templateFields.map((field) => (
+            <div key={field.key} className="space-y-2">
+              <Label className="text-sm font-medium">{field.label}</Label>
+              <Textarea
+                id={`template-${field.key}`}
+                value={config[field.key] ?? field.defaultVal}
+                onChange={(e) => setConfig({ ...config, [field.key]: e.target.value })}
+                rows={3}
+                className="font-mono text-sm"
+              />
+              <div className="flex flex-wrap gap-1.5">
+                {field.variables.map((v) => (
+                  <Badge
+                    key={v}
+                    variant="secondary"
+                    className="cursor-pointer hover:bg-primary hover:text-primary-foreground transition-colors text-xs"
+                    onClick={() => insertVariable(field.key, v)}
+                  >
+                    {v}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+
       <Button onClick={handleSave} className="w-full sm:w-auto"><Save className="mr-2 h-4 w-4" /> Salvar configurações</Button>
     </div>
   );
