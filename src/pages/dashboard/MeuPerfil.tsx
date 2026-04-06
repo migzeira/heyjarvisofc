@@ -48,7 +48,7 @@ export default function MeuPerfil() {
   const loadData = async () => {
     const [profileRes, numbersRes] = await Promise.all([
       supabase.from("profiles").select("*").eq("id", user!.id).single(),
-      supabase.from("user_phone_numbers").select("*").eq("user_id", user!.id).order("created_at"),
+      (supabase.from("user_phone_numbers" as any).select("*").eq("user_id", user!.id).order("created_at") as any),
     ]);
     setProfile(profileRes.data);
     setExtraNumbers(numbersRes.data ?? []);
@@ -61,11 +61,11 @@ export default function MeuPerfil() {
   const addExtraNumber = async () => {
     if (!newNumber.trim()) return;
     const clean = newNumber.replace(/\D/g, "");
-    const { error } = await supabase.from("user_phone_numbers").insert({
+    const { error } = await (supabase.from("user_phone_numbers" as any).insert({
       user_id: user!.id,
       phone_number: clean,
       label: newLabel || null,
-    });
+    }) as any);
     if (error) toast.error(error.message.includes("Limite") ? error.message : "Erro ao adicionar número");
     else {
       toast.success("Número adicionado!");
@@ -76,7 +76,7 @@ export default function MeuPerfil() {
   };
 
   const removeExtraNumber = async (id: string) => {
-    await supabase.from("user_phone_numbers").delete().eq("id", id);
+    await (supabase.from("user_phone_numbers" as any).delete().eq("id", id) as any);
     toast.success("Número removido.");
     loadData();
   };

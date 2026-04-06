@@ -77,7 +77,7 @@ export default function Financas() {
     const [txRes, catRes, recRes] = await Promise.all([
       supabase.from("transactions").select("*").eq("user_id", user!.id).order("transaction_date", { ascending: false }).limit(500),
       supabase.from("categories").select("*").eq("user_id", user!.id).order("name"),
-      supabase.from("recurring_transactions").select("*").eq("user_id", user!.id).order("next_date"),
+      (supabase.from("recurring_transactions" as any).select("*").eq("user_id", user!.id).order("next_date") as any),
     ]);
     setTransactions(txRes.data ?? []);
     setCategories(catRes.data ?? []);
@@ -87,7 +87,7 @@ export default function Financas() {
 
   const handleAddRecurring = async (e: React.FormEvent) => {
     e.preventDefault();
-    const { error } = await supabase.from("recurring_transactions").insert({
+    const { error } = await (supabase.from("recurring_transactions" as any).insert({
       user_id: user!.id,
       description: recurringForm.description,
       amount: parseFloat(recurringForm.amount),
@@ -95,7 +95,7 @@ export default function Financas() {
       category: recurringForm.category,
       frequency: recurringForm.frequency,
       next_date: recurringForm.next_date,
-    });
+    }) as any);
     if (error) toast.error("Erro ao criar recorrente: " + error.message);
     else {
       toast.success("Transação recorrente criada!");
@@ -106,12 +106,12 @@ export default function Financas() {
   };
 
   const toggleRecurring = async (id: string, active: boolean) => {
-    await supabase.from("recurring_transactions").update({ active }).eq("id", id);
+    await (supabase.from("recurring_transactions" as any).update({ active } as any).eq("id", id) as any);
     loadData();
   };
 
   const deleteRecurring = async (id: string) => {
-    await supabase.from("recurring_transactions").delete().eq("id", id);
+    await (supabase.from("recurring_transactions" as any).delete().eq("id", id) as any);
     toast.success("Removida!");
     loadData();
   };
@@ -133,7 +133,7 @@ export default function Financas() {
       acc[t.category] = (acc[t.category] || 0) + Number(t.amount);
       return acc;
     }, {})
-  ).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
+  ).map(([name, value]) => ({ name, value: value as number })).sort((a, b) => (b.value as number) - (a.value as number));
 
   // Monthly trend (last 6 months)
   const now = new Date();
@@ -402,8 +402,9 @@ export default function Financas() {
           ) : (
             <div className="space-y-4">
               {Object.entries(groupedByDate).map(([date, txs]) => {
-                const dayExpenses = txs.filter(t => t.type === "expense").reduce((s, t) => s + Number(t.amount), 0);
-                const dayIncome = txs.filter(t => t.type === "income").reduce((s, t) => s + Number(t.amount), 0);
+                const txArr = txs as any[];
+                const dayExpenses = txArr.filter((t: any) => t.type === "expense").reduce((s: number, t: any) => s + Number(t.amount), 0);
+                const dayIncome = txArr.filter((t: any) => t.type === "income").reduce((s: number, t: any) => s + Number(t.amount), 0);
                 return (
                   <div key={date}>
                     <div className="flex items-center justify-between py-1 mb-2">
@@ -416,7 +417,7 @@ export default function Financas() {
                       </div>
                     </div>
                     <div className="space-y-1">
-                      {txs.map(t => (
+                      {txArr.map((t: any) => (
                         <div key={t.id} className="flex items-center gap-3 p-3 rounded-lg bg-card border border-border hover:bg-accent/5 transition-colors">
                           <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${t.type === "expense" ? "bg-red-500/10" : "bg-green-500/10"}`}>
                             {t.type === "expense"

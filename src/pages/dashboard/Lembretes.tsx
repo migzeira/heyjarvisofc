@@ -88,7 +88,7 @@ export default function Lembretes() {
       .select("*")
       .eq("user_id", user!.id)
       .order("send_at", { ascending: true });
-    setReminders(data ?? []);
+    setReminders((data as any) ?? []);
     setLoading(false);
   };
 
