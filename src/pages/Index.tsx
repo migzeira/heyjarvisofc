@@ -1296,9 +1296,14 @@ export default function Index() {
             </div>
           </div>
           <div className="pt-8 border-t border-white/[0.06] flex flex-col md:flex-row justify-between items-center gap-4 text-[12px] text-gray-600">
-            <div>
-              © 2026 Minha Maya · Todos os direitos reservados · Um produto da{" "}
-              <a href="https://mayahub.ai" className="text-violet-400 hover:text-violet-300 transition-colors" target="_blank" rel="noreferrer">MayaHub</a>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <span>© 2026 Minha Maya · Todos os direitos reservados</span>
+              <span>·</span>
+              <Link to="/termos-de-uso" className="text-gray-500 hover:text-white transition-colors">Termos de Uso</Link>
+              <span>·</span>
+              <Link to="/politica-de-privacidade" className="text-gray-500 hover:text-white transition-colors">Política de Privacidade</Link>
+              <span>· Um produto da{" "}
+              <a href="https://mayahub.ai" className="text-violet-400 hover:text-violet-300 transition-colors" target="_blank" rel="noreferrer">MayaHub</a></span>
             </div>
             <div className="flex items-center gap-1.5"><Lock className="w-3 h-3" /> Dados criptografados e seguros</div>
           </div>
