@@ -106,12 +106,12 @@ export default function Financas() {
   };
 
   const toggleRecurring = async (id: string, active: boolean) => {
-    await supabase.from("recurring_transactions").update({ active }).eq("id", id);
+    await (supabase.from("recurring_transactions" as any).update({ active } as any).eq("id", id) as any);
     loadData();
   };
 
   const deleteRecurring = async (id: string) => {
-    await supabase.from("recurring_transactions").delete().eq("id", id);
+    await (supabase.from("recurring_transactions" as any).delete().eq("id", id) as any);
     toast.success("Removida!");
     loadData();
   };
