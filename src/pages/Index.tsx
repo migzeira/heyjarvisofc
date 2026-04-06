@@ -1074,7 +1074,7 @@ export default function Index() {
                 items: ["Exportação automática","Planilha sempre atualizada","Use suas próprias fórmulas"],
               },
               {
-                icon: FileText, color: "text-gray-300", bg: "from-gray-500/15 to-gray-500/5", border: "border-gray-500/25",
+                image: notionImg, color: "text-gray-300", bg: "from-gray-500/15 to-gray-500/5", border: "border-gray-500/25",
                 title: "Notion",
                 desc: "Salve ideias, anotações e tarefas no WhatsApp. Elas aparecem organizadas no seu workspace do Notion sem você tocar em nada.",
                 items: ["Notas sincronizadas","Organização automática","Integra com databases"],
