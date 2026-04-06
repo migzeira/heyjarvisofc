@@ -124,11 +124,6 @@ export default function ConfigAgente() {
   if (loading) return <div className="space-y-4">{[1,2,3].map(i => <Skeleton key={i} className="h-40" />)}</div>;
   if (!config) return null;
 
-  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-  const callbackUrl = `${supabaseUrl}/functions/v1/oauth-callback`;
-
-  const googleConfigured = isConfigured("google_client_id") && isConfigured("google_client_secret");
-  const notionConfigured = isConfigured("notion_client_id") && isConfigured("notion_client_secret");
 
   return (
     <div className="space-y-6 max-w-3xl">
