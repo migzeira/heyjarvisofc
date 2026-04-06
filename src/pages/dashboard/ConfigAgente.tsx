@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
+import { Badge } from "@/components/ui/badge";
 import { Plus, Trash2, Save, MessageSquare, RotateCcw } from "lucide-react";
 
 const TEMPLATE_FIELDS = [
