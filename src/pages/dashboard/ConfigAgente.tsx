@@ -56,63 +56,6 @@ export default function ConfigAgente() {
 
   useEffect(() => { if (user) loadData(); }, [user]);
 
-  const loadCredentials = async () => {
-    try {
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-      const res = await fetch(`${supabaseUrl}/functions/v1/admin-settings`, {
-        headers: { Authorization: `Bearer ${session!.access_token}` },
-      });
-      const data = await res.json();
-      if (Array.isArray(data)) {
-        const map: Record<string, { value: string; configured: boolean }> = {};
-        data.forEach((s: any) => { map[s.key] = { value: s.value || "", configured: !!s.configured }; });
-        setCredSettings(map);
-      }
-    } catch { /* silently fail */ }
-    setCredLoading(false);
-  };
-
-  const saveCredentials = async () => {
-    setCredSaving(true);
-    try {
-      const body: Record<string, string> = {};
-      if (googleClientId) body.google_client_id = googleClientId;
-      if (googleClientSecret) body.google_client_secret = googleClientSecret;
-      if (notionClientId) body.notion_client_id = notionClientId;
-      if (notionClientSecret) body.notion_client_secret = notionClientSecret;
-      if (dashboardUrl) body.dashboard_url = dashboardUrl;
-
-      if (Object.keys(body).length === 0) {
-        toast.error("Preencha pelo menos um campo");
-        setCredSaving(false);
-        return;
-      }
-
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-      const res = await fetch(`${supabaseUrl}/functions/v1/admin-settings`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${session!.access_token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) throw new Error("Erro");
-      toast.success("Credenciais salvas com sucesso!");
-      setGoogleClientId("");
-      setGoogleClientSecret("");
-      setNotionClientId("");
-      setNotionClientSecret("");
-      setDashboardUrl("");
-      loadCredentials();
-    } catch {
-      toast.error("Erro ao salvar credenciais");
-    }
-    setCredSaving(false);
-  };
-
-  const isConfigured = (key: string) => credSettings[key]?.configured ?? false;
-  const maskedValue = (key: string) => credSettings[key]?.value || "";
 
   const loadData = async () => {
     const [configRes, qrRes] = await Promise.all([
