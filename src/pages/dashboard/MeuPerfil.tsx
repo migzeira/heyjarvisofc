@@ -61,11 +61,11 @@ export default function MeuPerfil() {
   const addExtraNumber = async () => {
     if (!newNumber.trim()) return;
     const clean = newNumber.replace(/\D/g, "");
-    const { error } = await supabase.from("user_phone_numbers").insert({
+    const { error } = await (supabase.from("user_phone_numbers" as any).insert({
       user_id: user!.id,
       phone_number: clean,
       label: newLabel || null,
-    });
+    }) as any);
     if (error) toast.error(error.message.includes("Limite") ? error.message : "Erro ao adicionar número");
     else {
       toast.success("Número adicionado!");
