@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -56,8 +56,6 @@ export default function ConfigAgente() {
   const [newReply, setNewReply] = useState("");
 
   useEffect(() => { if (user) loadData(); }, [user]);
-
-
   const loadData = async () => {
     const [configRes, qrRes] = await Promise.all([
       supabase.from("agent_configs").select("*").eq("user_id", user!.id).single(),
@@ -124,7 +122,6 @@ export default function ConfigAgente() {
 
   if (loading) return <div className="space-y-4">{[1,2,3].map(i => <Skeleton key={i} className="h-40" />)}</div>;
   if (!config) return null;
-
 
   return (
     <div className="space-y-6 max-w-3xl">

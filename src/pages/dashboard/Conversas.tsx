@@ -6,7 +6,12 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
-import { MessageSquare, Search, ArrowLeft } from "lucide-react";
+import { MessageSquare, Search, ArrowLeft, Trash2 } from "lucide-react";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { toast } from "sonner";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 
@@ -24,6 +29,15 @@ export default function Conversas() {
     const { data } = await supabase.from("conversations").select("*").eq("user_id", user!.id).order("last_message_at", { ascending: false });
     setConversations(data ?? []);
     setLoading(false);
+  };
+
+  const deleteConversation = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    // Deleta mensagens primeiro, depois a conversa
+    await supabase.from("messages").delete().eq("conversation_id", id);
+    const { error } = await supabase.from("conversations").delete().eq("id", id);
+    if (error) toast.error("Erro ao excluir conversa");
+    else { toast.success("Conversa excluída"); loadConversations(); }
   };
 
   const loadMessages = async (convo: any) => {
@@ -77,7 +91,7 @@ export default function Conversas() {
       {filtered.length > 0 ? (
         <div className="space-y-2">
           {filtered.map(c => (
-            <Card key={c.id} className="bg-card border-border cursor-pointer hover:border-primary/30 transition-colors" onClick={() => loadMessages(c)}>
+            <Card key={c.id} className="bg-card border-border cursor-pointer hover:border-primary/30 transition-colors group" onClick={() => loadMessages(c)}>
               <CardContent className="py-4 flex items-center gap-4">
                 <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
                   <MessageSquare className="h-5 w-5 text-primary" />
@@ -86,9 +100,38 @@ export default function Conversas() {
                   <p className="font-medium text-sm">{c.phone_number}</p>
                   <p className="text-sm text-muted-foreground truncate">{c.summary || "Sem resumo"}</p>
                 </div>
-                <div className="text-right flex-shrink-0">
-                  <p className="text-xs text-muted-foreground">{c.last_message_at ? format(new Date(c.last_message_at), "dd/MM HH:mm") : ""}</p>
-                  <p className="text-xs text-muted-foreground/60">{c.message_count} msgs</p>
+                <div className="text-right flex-shrink-0 flex items-center gap-3">
+                  <div>
+                    <p className="text-xs text-muted-foreground">{c.last_message_at ? format(new Date(c.last_message_at), "dd/MM HH:mm") : ""}</p>
+                    <p className="text-xs text-muted-foreground/60">{c.message_count} msgs</p>
+                  </div>
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <button
+                        className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive p-1"
+                        onClick={e => e.stopPropagation()}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent className="bg-card border-border">
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>Excluir conversa?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          Todas as mensagens desta conversa com <strong>{c.phone_number}</strong> serão excluídas permanentemente.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                        <AlertDialogAction
+                          className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                          onClick={(e) => deleteConversation(c.id, e)}
+                        >
+                          Excluir
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
                 </div>
               </CardContent>
             </Card>

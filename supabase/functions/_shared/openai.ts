@@ -232,3 +232,69 @@ Não invente dados financeiros — se perguntado sobre gastos específicos e nã
 
   return await chat(messages, systemPrompt);
 }
+
+// ─────────────────────────────────────────────────────────────────
+// REMINDER INTENT PARSER
+// ─────────────────────────────────────────────────────────────────
+
+export interface ReminderParsed {
+  title: string;               // curto, ex: "Ligar pro pai"
+  message: string;             // mensagem completa a enviar
+  remind_at: string;           // ISO 8601 com timezone (ex: "2026-04-07T12:20:00-03:00")
+  recurrence: "none" | "daily" | "weekly" | "monthly" | "day_of_month";
+  recurrence_value: number | null; // weekday 0-6 (weekly) ou dia 1-31 (day_of_month)
+}
+
+/**
+ * Usa Claude para transformar linguagem natural de lembrete em dados estruturados.
+ * @param message  texto do usuário, ex: "me lembra de ligar pro pai às 12:20"
+ * @param nowIso   data/hora atual no formato ISO com offset, ex: "2026-04-07T11:00:00-03:00"
+ */
+export async function parseReminderIntent(
+  message: string,
+  nowIso: string
+): Promise<ReminderParsed | null> {
+  const system = `Você é um parser de lembretes. Responda APENAS com JSON válido, sem markdown, sem explicações.`;
+
+  const prompt = `Hora atual: ${nowIso} (America/Sao_Paulo, UTC-3).
+
+Analise o pedido de lembrete e retorne JSON com EXATAMENTE esta estrutura:
+{
+  "title": "texto curto descritivo (máx 60 chars)",
+  "message": "mensagem que será enviada no lembrete (começa com ⏰)",
+  "remind_at": "ISO 8601 com offset -03:00, ex: 2026-04-07T12:20:00-03:00",
+  "recurrence": "none | daily | weekly | monthly | day_of_month",
+  "recurrence_value": null ou número (dia da semana 0=dom..6=sáb para weekly; dia 1-31 para day_of_month)
+}
+
+Regras para remind_at:
+- Se hora mencionada já passou hoje → agendar para amanhã
+- Se não mencionou data → assume hoje (ou amanhã se hora passou)
+- "amanhã" → próximo dia
+- "sexta" / "segunda" → próximo dia da semana mencionado
+- "semana que vem" → +7 dias
+
+Regras para recurrence:
+- Sem "todo" / "toda" / "sempre" → "none"
+- "todo dia" → "daily"
+- "toda segunda/terça/..." → "weekly", recurrence_value = dia (0=dom,1=seg,2=ter,3=qua,4=qui,5=sex,6=sáb)
+- "todo dia 10" / "dia 10 de todo mês" → "day_of_month", recurrence_value = 10
+- "todo mês" → "monthly", recurrence_value = null
+
+Pedido: "${message}"`;
+
+  const result = await chat(
+    [{ role: "user", content: prompt }],
+    system,
+    true
+  );
+
+  try {
+    const parsed = JSON.parse(result) as ReminderParsed;
+    // Validação básica
+    if (!parsed.remind_at || !parsed.recurrence) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
