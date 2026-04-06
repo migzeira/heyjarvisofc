@@ -197,9 +197,10 @@ export default function Financas() {
 
   // Weekly bar chart (last 4 weeks)
   const weeklyData = Array.from({ length: 4 }, (_, i) => {
-    const weekStart = startOfWeek(subMonths(now, 0), { locale: ptBR });
-    const ws = new Date(weekStart.getTime() - (3 - i) * 7 * 86400000);
-    const we = new Date(ws.getTime() + 6 * 86400000 + 86399999);
+    const weekStart = startOfWeek(now, { locale: ptBR });
+    const wsTime = weekStart.getTime() - (3 - i) * 7 * 86400000;
+    const ws = new Date(wsTime);
+    const we = new Date(wsTime + 6 * 86400000 + 86399999);
     const txs = transactions.filter(t => {
       const d = new Date(t.transaction_date + "T12:00:00");
       return d >= ws && d <= we;
