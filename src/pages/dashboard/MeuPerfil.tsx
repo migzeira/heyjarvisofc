@@ -76,7 +76,7 @@ export default function MeuPerfil() {
   };
 
   const removeExtraNumber = async (id: string) => {
-    await supabase.from("user_phone_numbers").delete().eq("id", id);
+    await (supabase.from("user_phone_numbers" as any).delete().eq("id", id) as any);
     toast.success("Número removido.");
     loadData();
   };

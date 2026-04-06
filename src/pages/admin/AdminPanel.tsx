@@ -136,10 +136,10 @@ export default function AdminPanel() {
 
   const rejectUser = async (userId: string) => {
     setApprovingId(userId);
-    const { error } = await supabase
+    const { error } = await (supabase
       .from("profiles")
-      .update({ account_status: "suspended" })
-      .eq("id", userId);
+      .update({ plan: "suspended" } as any)
+      .eq("id", userId) as any);
     if (error) toast.error("Erro ao rejeitar");
     else {
       toast.success("Conta rejeitada.");

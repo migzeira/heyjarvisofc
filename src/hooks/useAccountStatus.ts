@@ -11,12 +11,12 @@ export function useAccountStatus() {
 
   useEffect(() => {
     if (!user) { setLoading(false); return; }
-    supabase
+    (supabase
       .from("profiles")
-      .select("account_status")
+      .select("*")
       .eq("id", user.id)
-      .single()
-      .then(({ data }) => {
+      .single() as any)
+      .then(({ data }: any) => {
         setStatus((data?.account_status as AccountStatus) ?? "pending");
         setLoading(false);
       });

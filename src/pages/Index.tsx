@@ -1117,7 +1117,7 @@ export default function Index() {
                 </p>
                 <Button size="lg" asChild
                   className="bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-500 hover:to-purple-500 text-white h-13 px-10 rounded-xl shadow-xl shadow-violet-500/30 hover:shadow-violet-500/50 hover:-translate-y-0.5 transition-all duration-200 font-bold text-[16px]">
-                  <Link to="/signup">Assinar agora por R$29,90 <ArrowRight className="w-5 h-5 ml-2" /></Link>
+                  <a href="https://pay.kirvano.com/4a308234-3702-4233-9d2a-4dce73bf0d2b" target="_blank" rel="noreferrer">Assinar agora por R$29,90 <ArrowRight className="w-5 h-5 ml-2" /></a>
                 </Button>
                 <p className="mt-4 text-[12px] text-gray-600">Sem contrato. Cancele quando quiser.</p>
               </div>

@@ -402,8 +402,9 @@ export default function Financas() {
           ) : (
             <div className="space-y-4">
               {Object.entries(groupedByDate).map(([date, txs]) => {
-                const dayExpenses = txs.filter(t => t.type === "expense").reduce((s, t) => s + Number(t.amount), 0);
-                const dayIncome = txs.filter(t => t.type === "income").reduce((s, t) => s + Number(t.amount), 0);
+                const txArr = txs as any[];
+                const dayExpenses = txArr.filter((t: any) => t.type === "expense").reduce((s: number, t: any) => s + Number(t.amount), 0);
+                const dayIncome = txArr.filter((t: any) => t.type === "income").reduce((s: number, t: any) => s + Number(t.amount), 0);
                 return (
                   <div key={date}>
                     <div className="flex items-center justify-between py-1 mb-2">
@@ -416,7 +417,7 @@ export default function Financas() {
                       </div>
                     </div>
                     <div className="space-y-1">
-                      {txs.map(t => (
+                      {txArr.map((t: any) => (
                         <div key={t.id} className="flex items-center gap-3 p-3 rounded-lg bg-card border border-border hover:bg-accent/5 transition-colors">
                           <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${t.type === "expense" ? "bg-red-500/10" : "bg-green-500/10"}`}>
                             {t.type === "expense"
