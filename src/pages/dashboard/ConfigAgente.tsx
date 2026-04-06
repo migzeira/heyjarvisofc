@@ -12,7 +12,8 @@ import { Separator } from "@/components/ui/separator";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
-import { Plus, Trash2, Save } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Plus, Trash2, Save, MessageSquare } from "lucide-react";
 
 export default function ConfigAgente() {
   const { user } = useAuth();
@@ -44,9 +45,61 @@ export default function ConfigAgente() {
       module_agenda: config.module_agenda,
       module_notes: config.module_notes,
       module_chat: config.module_chat,
+      template_expense: config.template_expense,
+      template_income: config.template_income,
+      template_expense_multi: config.template_expense_multi,
+      template_note: config.template_note,
+      greeting_message: config.greeting_message,
     }).eq("user_id", user!.id);
     if (error) toast.error("Erro ao salvar");
     else toast.success("Configurações salvas!");
+  };
+
+  const templateFields = [
+    {
+      key: "template_expense",
+      label: "Gasto registrado",
+      defaultVal: '🔴 *Gasto registrado!*\n📝 {{description}}\n💰 R$ {{amount}}',
+      variables: ["{{description}}", "{{amount}}", "{{category}}"],
+    },
+    {
+      key: "template_income",
+      label: "Receita registrada",
+      defaultVal: '🟢 *Receita registrada!*\n📝 {{description}}\n💰 R$ {{amount}}',
+      variables: ["{{description}}", "{{amount}}", "{{category}}"],
+    },
+    {
+      key: "template_expense_multi",
+      label: "Múltiplos gastos",
+      defaultVal: '✅ *{{count}} gastos registrados!*\n\n{{lines}}\n\n💸 *Total: R$ {{total}}*',
+      variables: ["{{count}}", "{{lines}}", "{{total}}"],
+    },
+    {
+      key: "template_note",
+      label: "Nota anotada",
+      defaultVal: '📝 *Anotado!*\n"{{content}}"',
+      variables: ["{{content}}"],
+    },
+    {
+      key: "greeting_message",
+      label: "Saudação inicial",
+      defaultVal: 'Olá! Sou a {{agent_name}}, sua assistente pessoal. Como posso ajudar?',
+      variables: ["{{agent_name}}"],
+    },
+  ];
+
+  const insertVariable = (fieldKey: string, variable: string) => {
+    const el = document.getElementById(`template-${fieldKey}`) as HTMLTextAreaElement | null;
+    if (!el) return;
+    const start = el.selectionStart;
+    const end = el.selectionEnd;
+    const current = config[fieldKey] || "";
+    const newVal = current.substring(0, start) + variable + current.substring(end);
+    setConfig({ ...config, [fieldKey]: newVal });
+    setTimeout(() => {
+      el.focus();
+      el.selectionStart = el.selectionEnd = start + variable.length;
+    }, 0);
   };
 
   const addQuickReply = async () => {
@@ -171,6 +224,40 @@ export default function ConfigAgente() {
             </div>
             <Button variant="outline" onClick={addQuickReply}><Plus className="h-4 w-4" /></Button>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card className="bg-card border-border">
+        <CardHeader>
+          <CardTitle className="text-base flex items-center gap-2">
+            <MessageSquare className="h-4 w-4" /> Mensagens do Assistente
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {templateFields.map((field) => (
+            <div key={field.key} className="space-y-2">
+              <Label className="text-sm font-medium">{field.label}</Label>
+              <Textarea
+                id={`template-${field.key}`}
+                value={config[field.key] ?? field.defaultVal}
+                onChange={(e) => setConfig({ ...config, [field.key]: e.target.value })}
+                rows={3}
+                className="font-mono text-sm"
+              />
+              <div className="flex flex-wrap gap-1.5">
+                {field.variables.map((v) => (
+                  <Badge
+                    key={v}
+                    variant="secondary"
+                    className="cursor-pointer hover:bg-primary hover:text-primary-foreground transition-colors text-xs"
+                    onClick={() => insertVariable(field.key, v)}
+                  >
+                    {v}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          ))}
         </CardContent>
       </Card>
 
