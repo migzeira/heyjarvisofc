@@ -622,14 +622,9 @@ function PricingSection() {
 
         <AnimateIn from="scale" delay={80}>
           <div className="relative rounded-2xl border border-violet-500/40 bg-[#0d0d1a] overflow-hidden shadow-2xl shadow-violet-500/10">
-            <div className="bg-gradient-to-r from-violet-600 to-purple-600 px-6 py-3 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-white" />
-                <span className="text-[13px] font-bold text-white">Minha Maya Completo</span>
-              </div>
-              <span className="text-[11px] bg-white/20 text-white px-2.5 py-1 rounded-full font-medium">
-                Oferta de lançamento
-              </span>
+            <div className="bg-gradient-to-r from-violet-600 to-purple-600 px-6 py-3 flex items-center justify-center gap-2">
+              <Sparkles className="w-4 h-4 text-white" />
+              <span className="text-[13px] font-bold text-white tracking-wide">Minha Maya Completo</span>
             </div>
 
             <div className="p-8">
@@ -655,8 +650,13 @@ function PricingSection() {
                 ))}
               </div>
 
-              <Button size="lg" asChild className="w-full bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-500 hover:to-purple-500 text-white h-13 rounded-xl shadow-xl shadow-violet-500/30 hover:shadow-violet-500/50 hover:-translate-y-0.5 transition-all duration-200 font-bold text-[16px]">
-                <a href={link} target="_blank" rel="noreferrer">Assinar agora</a>
+              <Button size="lg" asChild className="w-full group relative overflow-hidden bg-gradient-to-r from-violet-600 via-purple-600 to-violet-600 bg-[length:200%_100%] animate-shimmer-slow hover:shadow-violet-500/50 text-white h-14 rounded-xl shadow-xl shadow-violet-500/30 hover:-translate-y-0.5 transition-all duration-300 font-bold text-[16px] border border-violet-400/20">
+                <a href={link} target="_blank" rel="noreferrer">
+                  <span className="relative z-10 flex items-center gap-2">
+                    Começar agora
+                    <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform duration-200" />
+                  </span>
+                </a>
               </Button>
 
               <div className="mt-4 flex flex-wrap items-center justify-center gap-4 text-[12px] text-gray-500">
@@ -715,7 +715,7 @@ export default function Index() {
             </Button>
             <Button size="sm" asChild
               className="bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-500 hover:to-purple-500 text-white rounded-lg shadow-lg shadow-violet-500/25 hover:-translate-y-px transition-all duration-200">
-              <a href="#planos">Assinar agora</a>
+              <a href="#planos"><span className="sm:hidden">Assinar</span><span className="hidden sm:inline">Assinar agora</span></a>
             </Button>
           </div>
         </div>
@@ -1125,11 +1125,11 @@ export default function Index() {
             ].map((s, i) => (
               <AnimateIn key={i} delay={i * 80}>
                 <div className={`rounded-2xl border ${s.border} bg-gradient-to-b ${s.color} p-6 text-center`}>
-                  <p className={`text-[10px] font-bold uppercase tracking-widest mb-3 ${s.textCls}`}>{s.label}</p>
-                  <p className="text-[38px] font-extrabold text-white leading-none" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+                  <p className={`text-[9px] sm:text-[10px] font-bold uppercase tracking-widest mb-3 ${s.textCls} truncate`}>{s.label}</p>
+                  <p className="text-[28px] sm:text-[38px] font-extrabold text-white leading-none" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
                     <span>+</span><Counter to={s.val} suffix="" />{s.suffix}
                   </p>
-                  <p className="text-[12px] text-gray-400 mt-2">{s.sub}</p>
+                  <p className="text-[11px] sm:text-[12px] text-gray-400 mt-2">{s.sub}</p>
                 </div>
               </AnimateIn>
             ))}
@@ -1235,15 +1235,20 @@ export default function Index() {
                 <div className="w-16 h-16 mx-auto mb-6 flex items-center justify-center">
                   <ChatAvatar />
                 </div>
-                <h2 className="text-[40px] font-extrabold tracking-tight mb-4" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+                <h2 className="text-[28px] sm:text-[40px] font-extrabold tracking-tight mb-4" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
                   Sua assistente está<br />pronta pra te ajudar
                 </h2>
-                <p className="text-gray-400 mb-9 max-w-md mx-auto leading-relaxed">
+                <p className="text-[14px] sm:text-base text-gray-400 mb-9 max-w-md mx-auto leading-relaxed">
                   Mais de 1.200 pessoas já organizam finanças, agenda e lembretes direto pelo WhatsApp. Começa agora.
                 </p>
                 <Button size="lg" asChild
-                  className="bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-500 hover:to-purple-500 text-white h-13 px-10 rounded-xl shadow-xl shadow-violet-500/30 hover:shadow-violet-500/50 hover:-translate-y-0.5 transition-all duration-200 font-bold text-[16px]">
-                  <a href="https://pay.kirvano.com/4a308234-3702-4233-9d2a-4dce73bf0d2b" target="_blank" rel="noreferrer">Assinar agora por R$29,90 <ArrowRight className="w-5 h-5 ml-2" /></a>
+                  className="group relative overflow-hidden bg-gradient-to-r from-violet-600 via-purple-600 to-violet-600 bg-[length:200%_100%] animate-shimmer-slow text-white h-13 px-6 sm:px-10 rounded-xl shadow-xl shadow-violet-500/30 hover:shadow-violet-500/50 hover:-translate-y-0.5 transition-all duration-300 font-bold text-[14px] sm:text-[16px] border border-violet-400/20">
+                  <a href="https://pay.kirvano.com/4a308234-3702-4233-9d2a-4dce73bf0d2b" target="_blank" rel="noreferrer">
+                    <span className="relative z-10 flex items-center gap-2">
+                      Começar por R$29,90
+                      <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform duration-200" />
+                    </span>
+                  </a>
                 </Button>
                 <p className="mt-4 text-[12px] text-gray-600">Sem contrato. Cancele quando quiser.</p>
               </div>
