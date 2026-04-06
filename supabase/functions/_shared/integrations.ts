@@ -5,8 +5,15 @@ const supabase = createClient(
   Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
 );
 
-const GOOGLE_CLIENT_ID = Deno.env.get("GOOGLE_CLIENT_ID") ?? "";
-const GOOGLE_CLIENT_SECRET = Deno.env.get("GOOGLE_CLIENT_SECRET") ?? "";
+/** Lê credencial do app_settings (fallback para env var) */
+async function getSetting(key: string): Promise<string> {
+  const { data } = await supabase
+    .from("app_settings")
+    .select("value")
+    .eq("key", key)
+    .maybeSingle();
+  return data?.value ?? Deno.env.get(key.toUpperCase()) ?? "";
+}
 
 /** Busca integração e renova token se necessário */
 async function getIntegration(userId: string, provider: string) {
@@ -20,19 +27,27 @@ async function getIntegration(userId: string, provider: string) {
 
   if (!data?.access_token) return null;
 
-  // Renova token Google se expirado
+  // Renova token Google se expirado (ou expira em menos de 60s)
   if (
     provider.startsWith("google") &&
     data.refresh_token &&
     data.expires_at &&
     new Date(data.expires_at) <= new Date(Date.now() + 60_000)
   ) {
+    const googleClientId = await getSetting("google_client_id");
+    const googleClientSecret = await getSetting("google_client_secret");
+
+    if (!googleClientId || !googleClientSecret) {
+      console.warn("Google credentials not configured in app_settings — skipping token refresh");
+      return data;
+    }
+
     const res = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
-        client_id: GOOGLE_CLIENT_ID,
-        client_secret: GOOGLE_CLIENT_SECRET,
+        client_id: googleClientId,
+        client_secret: googleClientSecret,
         refresh_token: data.refresh_token,
         grant_type: "refresh_token",
       }),
@@ -45,6 +60,8 @@ async function getIntegration(userId: string, provider: string) {
         .update({ access_token: tokens.access_token, expires_at: expiresAt })
         .eq("id", data.id);
       data.access_token = tokens.access_token;
+    } else {
+      console.error("Google token refresh failed:", tokens.error_description ?? tokens.error);
     }
   }
 

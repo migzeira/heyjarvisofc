@@ -473,12 +473,8 @@ serve(async (req) => {
     return new Response("Invalid JSON", { status: 400 });
   }
 
-  // LOG BRUTO para diagnóstico
-  console.log("WEBHOOK_FULL:", JSON.stringify(body));
-
   // Apenas mensagens recebidas (não enviadas pelo bot)
   const event = body.event as string;
-  console.log("WEBHOOK_EVENT:", event);
   if (event !== "messages.upsert") {
     return new Response("OK");
   }
@@ -488,10 +484,7 @@ serve(async (req) => {
   const data = (Array.isArray(rawData) ? rawData[0] : rawData) as Record<string, unknown>;
   const key = data?.key as Record<string, unknown>;
 
-  console.log("WEBHOOK_KEY:", JSON.stringify(key));
-
   if (key?.fromMe) {
-    console.log("WEBHOOK_SKIP: fromMe");
     return new Response("OK");
   }
 
@@ -504,16 +497,12 @@ serve(async (req) => {
       .eq("last_processed_id", messageId)
       .maybeSingle();
     if (existing) {
-      console.log("WEBHOOK_SKIP: duplicate", messageId);
       return new Response("OK");
     }
   }
 
   const remoteJid = key?.remoteJid as string;
-  console.log("WEBHOOK_JID:", remoteJid);
-
   if (!remoteJid || remoteJid.endsWith("@g.us")) {
-    console.log("WEBHOOK_SKIP: no_jid_or_group");
     return new Response("OK");
   }
 
@@ -530,10 +519,7 @@ serve(async (req) => {
       ?.text as string;
 
   const pushName = (data?.pushName as string) || "";
-  console.log("WEBHOOK_TEXT:", text, "LID:", lid, "NAME:", pushName);
-
   if (!text?.trim()) {
-    console.log("WEBHOOK_SKIP: no_text");
     return new Response("OK");
   }
 
@@ -672,11 +658,8 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       }
     }
 
-    log.push(`config: ${config ? "found" : "NULL"} finance=${config?.module_finance} agenda=${config?.module_agenda}`);
-    log.push(`intent_input: ${text}`);
     // 5. Classifica intenção
     let intent: Intent = classifyIntent(text);
-    log.push(`intent: ${intent}`);
 
     // Se há ação pendente e a mensagem parece ser uma resposta, mantém o contexto
     if (
@@ -751,7 +734,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
     log.push(`ERROR: ${errMsg}`);
     console.error("processMessage error:", err);
     try {
-      await sendText(phone, "⚠️ Ocorreu um erro. Tente novamente em alguns instantes.");
+      await sendText(replyTo, "⚠️ Ocorreu um erro. Tente novamente em alguns instantes.");
     } catch {
       // ignora erro no fallback
     }

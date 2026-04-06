@@ -41,9 +41,10 @@ serve(async (req) => {
   const { data: { user } } = await supabaseUser.auth.getUser();
   if (!user) return new Response("Unauthorized", { status: 401, headers: CORS });
 
-  // Só o owner (plan = 'owner' ou é o primeiro usuário cadastrado) pode acessar
-  // Simplificado: qualquer usuário autenticado pode ver/editar suas configurações globais
-  // Em produção, restrinja por role
+  // Somente o administrador pode acessar configurações globais do sistema
+  if (user.email !== "migueldrops@gmail.com") {
+    return new Response("Forbidden", { status: 403, headers: CORS });
+  }
 
   if (req.method === "GET") {
     const { data } = await supabaseAdmin
