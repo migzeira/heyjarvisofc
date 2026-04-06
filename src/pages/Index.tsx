@@ -8,6 +8,9 @@ import {
 } from "lucide-react";
 import logoEscrita from "@/assets/logo_escrita.png";
 import logoChats from "@/assets/logo_chats.png";
+import googleAgendaImg from "@/assets/google_agenda.png";
+import googleSheetsImg from "@/assets/google_sheets.png";
+import notionImg from "@/assets/notion_logo.png";
 
 /* ─────────────────────────────────────────────────────────────────────────────
    TYPES
