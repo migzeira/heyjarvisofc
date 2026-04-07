@@ -58,10 +58,12 @@ function nextOccurrence(
 }
 
 serve(async (req) => {
-  // Protege a rota: só aceita chamadas internas (cron ou service role)
-  const authHeader = req.headers.get("Authorization");
-  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  if (authHeader !== `Bearer ${serviceKey}`) {
+  // Protege a rota: aceita service role key OU CRON_SECRET (para pg_cron)
+  const authHeader = req.headers.get("Authorization") ?? "";
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+  const cronSecret = Deno.env.get("CRON_SECRET") ?? "";
+  const validTokens = [`Bearer ${serviceKey}`, `Bearer ${cronSecret}`].filter(t => t !== "Bearer ");
+  if (!validTokens.includes(authHeader)) {
     return new Response("Unauthorized", { status: 401 });
   }
 
