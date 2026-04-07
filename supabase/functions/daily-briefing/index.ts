@@ -142,7 +142,14 @@ function todayInTz(tz: string): string {
 // ─────────────────────────────────────────────
 // MAIN
 // ─────────────────────────────────────────────
-serve(async (_req) => {
+serve(async (req) => {
+  // Auth via CRON_SECRET
+  const authHeader = req.headers.get("authorization") ?? "";
+  const cronSecret = Deno.env.get("CRON_SECRET") ?? "";
+  if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+
   const nowUtcHour = new Date().getUTCHours();
   console.log(`[daily-briefing] Running at UTC hour: ${nowUtcHour}`);
 
@@ -286,7 +293,7 @@ serve(async (_req) => {
     }
   }
 
-  const result = { sent, failed, skipped, date: todayBRT };
+  const result = { sent, failed, skipped, date: new Date().toLocaleDateString("sv-SE", { timeZone: "America/Sao_Paulo" }) };
   console.log("[daily-briefing] Done:", result);
   return new Response(JSON.stringify(result));
 });

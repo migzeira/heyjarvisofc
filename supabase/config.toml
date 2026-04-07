@@ -17,3 +17,6 @@ verify_jwt = false
 
 [functions.inactivity-alert]
 verify_jwt = false
+
+[functions.monitor-health]
+verify_jwt = false

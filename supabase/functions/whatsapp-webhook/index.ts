@@ -2577,6 +2577,21 @@ async function saveReminder(
   userNickname: string | null = null,
   userTz = "America/Sao_Paulo"
 ): Promise<{ response: string }> {
+  // ── Limite de lembretes pendentes por usuário (evita abuso) ──
+  const { count: pendingCount } = await supabase
+    .from("reminders")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", userId)
+    .eq("status", "pending") as any;
+
+  if ((pendingCount ?? 0) >= 50) {
+    return {
+      response: lang === "en"
+        ? "⚠️ You've reached the limit of 50 pending reminders. Cancel some before creating new ones.\n\nSay: _\"show my reminders\"_ to see them."
+        : "⚠️ Você tem muitos lembretes pendentes (máximo 50). Cancele alguns antes de criar novos.\n\nDiga: _\"meus lembretes\"_ para ver a lista.",
+    };
+  }
+
   const { error } = await supabase.from("reminders").insert({
     user_id: userId,
     whatsapp_number: phone,
@@ -2824,8 +2839,26 @@ async function processImageMessage(
   }
 }
 
+function getHumanizedError(intent: string): string {
+  switch (intent) {
+    case "reminder_set":    return "⚠️ Não consegui salvar seu lembrete. Pode tentar de novo? Ex: _Me lembra de ligar amanhã às 10h_";
+    case "reminder_cancel": return "⚠️ Não consegui cancelar o lembrete agora. Tente de novo em instantes.";
+    case "reminder_edit":   return "⚠️ Não consegui editar o lembrete. Tente de novo com mais detalhes.";
+    case "reminder_list":   return "⚠️ Não consegui buscar seus lembretes. Tente de novo em instantes.";
+    case "agenda_create":   return "⚠️ Não consegui salvar esse compromisso. Pode repetir com data e horário? Ex: _Reunião amanhã às 15h_";
+    case "agenda_query":    return "⚠️ Não consegui consultar sua agenda agora. Tente de novo em instantes.";
+    case "agenda_edit":     return "⚠️ Não consegui alterar o compromisso. Tente de novo com mais detalhes.";
+    case "agenda_delete":   return "⚠️ Não consegui remover o compromisso. Tente de novo em instantes.";
+    case "notes_save":      return "⚠️ Não consegui salvar sua anotação. Pode tentar de novo?";
+    case "finance_record":  return "⚠️ Não consegui registrar essa transação. Tente de novo. Ex: _Gastei 50 reais de almoço_";
+    case "finance_report":  return "⚠️ Não consegui gerar o relatório financeiro agora. Tente de novo em instantes.";
+    default:                return "⚠️ Ops, algo deu errado por aqui. Pode tentar de novo? 🙏";
+  }
+}
+
 async function processMessage(replyTo: string, text: string, lid: string | null = null, messageId?: string, pushName = "", _originalText?: string): Promise<unknown> {
   const log: string[] = [];
+  let currentIntent = "";
   try {
     // ── Fluxo de vinculação: usuário enviou código MAYA-XXXXXX ──
     const linkMatch = text.trim().match(/^MAYA[-\s]?([A-Z0-9]{6})$/i);
@@ -3059,6 +3092,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
 
     // 5. Classifica intenção
     let intent: Intent = classifyIntent(text);
+    currentIntent = intent;
 
     // Se há ação pendente e a mensagem parece ser uma resposta, mantém o contexto
     // Exclui reminder_snooze pois é ação one-shot (não tem fluxo multi-step)
@@ -3070,6 +3104,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       text.length < 150
     ) {
       intent = session.pending_action as Intent;
+      currentIntent = intent;
     }
 
     // Módulos ativos por padrão quando sem configuração
@@ -3229,7 +3264,8 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       metadata: { lid, messageId },
     });
     try {
-      await sendText(replyTo, "⚠️ Ocorreu um erro. Tente novamente em alguns instantes.");
+      const humanizedError = getHumanizedError(currentIntent);
+      await sendText(replyTo, humanizedError);
     } catch { /* ignora erro no fallback */ }
     return log;
   }
