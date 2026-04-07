@@ -213,8 +213,8 @@ export default function Anotacoes() {
 
   if (loading) {
     return (
-      <div className="columns-1 sm:columns-2 lg:columns-3 gap-4">
-        {[1,2,3,4,5,6].map(i => <Skeleton key={i} className="h-36 mb-4 rounded-xl" />)}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        {[1,2,3,4,5,6].map(i => <Skeleton key={i} className="h-36 rounded-xl" />)}
       </div>
     );
   }
@@ -264,9 +264,9 @@ export default function Anotacoes() {
         </p>
       )}
 
-      {/* Notes masonry grid */}
+      {/* Notes grid */}
       {filtered.length > 0 ? (
-        <div className="columns-1 sm:columns-2 lg:columns-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {filtered.map(n => (
             <NoteCard
               key={n.id}
