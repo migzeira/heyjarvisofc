@@ -11,41 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
-import { Badge } from "@/components/ui/badge";
-import { Plus, Trash2, Save, MessageSquare, RotateCcw } from "lucide-react";
-
-const TEMPLATE_FIELDS = [
-  {
-    key: "template_expense",
-    label: "Gasto registrado",
-    defaultVal: '🔴 *Gasto registrado!*\n📝 {{description}}\n💰 R$ {{amount}}',
-    variables: ["{{description}}", "{{amount}}", "{{category}}", "{{user_name}}"],
-  },
-  {
-    key: "template_income",
-    label: "Receita registrada",
-    defaultVal: '🟢 *Receita registrada!*\n📝 {{description}}\n💰 R$ {{amount}}',
-    variables: ["{{description}}", "{{amount}}", "{{category}}", "{{user_name}}"],
-  },
-  {
-    key: "template_expense_multi",
-    label: "Múltiplos gastos",
-    defaultVal: '✅ *{{count}} gastos registrados!*\n\n{{lines}}\n\n💸 *Total: R$ {{total}}*',
-    variables: ["{{count}}", "{{lines}}", "{{total}}", "{{user_name}}"],
-  },
-  {
-    key: "template_note",
-    label: "Nota anotada",
-    defaultVal: '📝 *Anotado, {{user_name}}!*\n"{{content}}"',
-    variables: ["{{content}}", "{{user_name}}"],
-  },
-  {
-    key: "greeting_message",
-    label: "Saudação inicial",
-    defaultVal: 'Olá, {{user_name}}! Sou a {{agent_name}}, sua assistente pessoal. Como posso ajudar?',
-    variables: ["{{agent_name}}", "{{user_name}}"],
-  },
-];
+import { Plus, Trash2, Save } from "lucide-react";
 
 export default function ConfigAgente() {
   const { user } = useAuth();
@@ -96,34 +62,9 @@ export default function ConfigAgente() {
       module_notes: config.module_notes === true,
       module_chat: config.module_chat === true,
       daily_briefing_enabled: config.daily_briefing_enabled === true,
-      // Message templates — persist null when cleared so webhook uses built-in defaults
-      template_expense: config.template_expense?.trim() || null,
-      template_income: config.template_income?.trim() || null,
-      template_expense_multi: config.template_expense_multi?.trim() || null,
-      template_note: config.template_note?.trim() || null,
-      greeting_message: config.greeting_message?.trim() || null,
     }).eq("user_id", user!.id);
     if (error) toast.error("Erro ao salvar");
     else toast.success("Configurações salvas!");
-  };
-
-  const insertVariable = (fieldKey: string, variable: string) => {
-    const el = document.getElementById(`template-${fieldKey}`) as HTMLTextAreaElement | null;
-    if (!el) return;
-    const start = el.selectionStart;
-    const end = el.selectionEnd;
-    const current = config[fieldKey] || "";
-    const newVal = current.substring(0, start) + variable + current.substring(end);
-    setConfig({ ...config, [fieldKey]: newVal });
-    setTimeout(() => {
-      el.focus();
-      el.selectionStart = el.selectionEnd = start + variable.length;
-    }, 0);
-  };
-
-  const resetToDefault = (fieldKey: string) => {
-    const field = TEMPLATE_FIELDS.find(f => f.key === fieldKey);
-    if (field) setConfig({ ...config, [fieldKey]: field.defaultVal });
   };
 
   const addQuickReply = async () => {
@@ -260,50 +201,6 @@ export default function ConfigAgente() {
             </div>
             <Button variant="outline" onClick={addQuickReply}><Plus className="h-4 w-4" /></Button>
           </div>
-        </CardContent>
-      </Card>
-
-      <Card className="bg-card border-border">
-        <CardHeader>
-          <CardTitle className="text-base flex items-center gap-2">
-            <MessageSquare className="h-4 w-4" /> Mensagens do Assistente
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          {TEMPLATE_FIELDS.map((field) => (
-            <div key={field.key} className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label className="text-sm font-medium">{field.label}</Label>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
-                  onClick={() => resetToDefault(field.key)}
-                >
-                  <RotateCcw className="h-3 w-3 mr-1" /> Padrão
-                </Button>
-              </div>
-              <Textarea
-                id={`template-${field.key}`}
-                value={config[field.key] ?? field.defaultVal}
-                onChange={(e) => setConfig({ ...config, [field.key]: e.target.value })}
-                rows={3}
-                className="font-mono text-sm"
-              />
-              <div className="flex flex-wrap gap-1.5">
-                {field.variables.map((v) => (
-                  <Badge
-                    key={v}
-                    variant="secondary"
-                    className="cursor-pointer hover:bg-primary hover:text-primary-foreground transition-colors text-xs"
-                    onClick={() => insertVariable(field.key, v)}
-                  >
-                    {v}
-                  </Badge>
-                ))}
-              </div>
-            </div>
-          ))}
         </CardContent>
       </Card>
 
