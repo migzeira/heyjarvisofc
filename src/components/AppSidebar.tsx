@@ -21,12 +21,11 @@ const menuItems = [
   { title: "Início", url: "/dashboard", icon: Home },
   { title: "Finanças", url: "/dashboard/financas", icon: Wallet },
   { title: "Agenda", url: "/dashboard/agenda", icon: CalendarDays },
+  { title: "Lembretes", url: "/dashboard/lembretes", icon: Bell },
   { title: "Anotações", url: "/dashboard/anotacoes", icon: StickyNote },
   { title: "Conversas", url: "/dashboard/conversas", icon: MessageSquare },
-  { title: "Lembretes", url: "/dashboard/lembretes", icon: Bell },
   { title: "Integrações", url: "/dashboard/integracoes", icon: Link2 },
   { title: "Config. do Agente", url: "/dashboard/agente", icon: Settings },
-  
   { title: "Meu Perfil", url: "/dashboard/perfil", icon: User },
 ];
 
