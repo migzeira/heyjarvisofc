@@ -2719,15 +2719,6 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       }
     }
 
-    // 3. Verifica limite de mensagens
-    if (profile.messages_used >= profile.messages_limit) {
-      await sendText(
-        sendPhone || replyTo,
-        "⚠️ Você atingiu o limite de mensagens do seu plano.\nAcesse o app para fazer upgrade! 🚀"
-      );
-      return log;
-    }
-
     // 3. Carrega configuração do agente
     const { data: config } = await supabase
       .from("agent_configs")

@@ -55,8 +55,7 @@ export default function MeuPerfil() {
     setLoading(false);
   };
 
-  const PLAN_MAX_NUMBERS: Record<string, number> = { starter: 1, pro: 2, business: 5 };
-  const maxExtra = (PLAN_MAX_NUMBERS[profile?.plan] ?? 1) - 1; // -1 pelo número principal
+  const maxExtra = 2; // Até 3 números totais (1 principal + 2 adicionais)
 
   const addExtraNumber = async () => {
     if (!newNumber.trim()) return;
@@ -164,19 +163,17 @@ export default function MeuPerfil() {
         </CardContent>
       </Card>
 
-      {/* Múltiplos números (Pro = 2, Business = 5) */}
-      {profile?.plan !== "starter" && (
-        <Card className="bg-card border-border">
+      {/* Números adicionais */}
+      <Card className="bg-card border-border">
           <CardHeader>
             <CardTitle className="text-base flex items-center gap-2">
               <Smartphone className="h-4 w-4" />
               Números adicionais
-              <Badge variant="secondary">{profile?.plan}</Badge>
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             <p className="text-xs text-muted-foreground">
-              Seu plano permite até {PLAN_MAX_NUMBERS[profile?.plan] ?? 1} número(s). Números adicionais também ativam o assistente.
+              Adicione até 2 números extras. Todos os números vinculados ativam o assistente.
             </p>
 
             {extraNumbers.map(n => (
@@ -210,12 +207,11 @@ export default function MeuPerfil() {
               </div>
             )}
 
-            {extraNumbers.length >= maxExtra && maxExtra > 0 && (
-              <p className="text-xs text-muted-foreground italic">Limite de números atingido para o plano {profile?.plan}.</p>
+            {extraNumbers.length >= maxExtra && (
+              <p className="text-xs text-muted-foreground italic">Limite de 2 números adicionais atingido.</p>
             )}
           </CardContent>
         </Card>
-      )}
     </div>
   );
 }

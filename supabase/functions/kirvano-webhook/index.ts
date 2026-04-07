@@ -26,19 +26,13 @@ const supabase = createClient(
 );
 
 // ─────────────────────────────────────────────────────────
-// Planos e limites
+// Plano único — mensal ou anual (sem tiers de funcionalidade)
 // ─────────────────────────────────────────────────────────
-const PLAN_LIMITS: Record<string, number> = {
-  starter: 500,
-  pro: 2000,
-  business: 10000,
-};
-
-function detectPlan(productName: string): "starter" | "pro" | "business" {
+function detectPlan(productName: string): string {
   const lower = (productName ?? "").toLowerCase();
-  if (lower.includes("business")) return "business";
-  if (lower.includes("pro")) return "pro";
-  return "starter";
+  // Distingue apenas mensal vs anual para exibição
+  if (lower.includes("anual") || lower.includes("annual") || lower.includes("annually")) return "maya_anual";
+  return "maya_mensal";
 }
 
 // ─────────────────────────────────────────────────────────
@@ -198,13 +192,13 @@ async function notifyUser(userId: string, message: string): Promise<void> {
 /** Ativa conta: compra aprovada / renovação */
 async function handleActivate(
   userId: string,
-  plan: "starter" | "pro" | "business",
+  plan: string,
   subscriptionId: string | null
 ): Promise<void> {
   await supabase.from("profiles").update({
     account_status: "active",
     plan,
-    messages_limit: PLAN_LIMITS[plan],
+    messages_limit: 999999,
     access_until: null,
     ...(subscriptionId && { kirvano_subscription_id: subscriptionId }),
   }).eq("id", userId);

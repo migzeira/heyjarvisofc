@@ -12,7 +12,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import {
-  Users, MessageSquare, Wallet, Settings, Shield, Search, Eye, MessageCircle,
+  Users, MessageSquare, Settings, Shield, Search, Eye, MessageCircle,
   Clock, CheckCircle, XCircle, RefreshCw, Download, CreditCard, AlertTriangle,
   TrendingUp, TrendingDown, ChevronLeft, ChevronRight, Webhook, ChevronDown, ChevronUp, Link2, Link2Off,
 } from "lucide-react";
@@ -52,13 +52,10 @@ export default function AdminPanel() {
 
   const [stats, setStats] = useState({
     totalUsers: 0, pendingUsers: 0, whatsappConnected: 0,
-    totalMessages: 0, totalTransactions: 0,
     totalRevenue: 0, approvedPayments: 0, errorCount: 0,
   });
   const [profiles, setProfiles] = useState<any[]>([]);
   const [conversations, setConversations] = useState<any[]>([]);
-  const [messages, setMessages] = useState<any[]>([]);
-  const [transactions, setTransactions] = useState<any[]>([]);
   const [payments, setPayments] = useState<any[]>([]);
   const [errorLogs, setErrorLogs] = useState<any[]>([]);
   const [kirvanoEvents, setKirvanoEvents] = useState<any[]>([]);
@@ -66,8 +63,6 @@ export default function AdminPanel() {
   // Pagination
   const [usersPage, setUsersPage] = useState(0);
   const [convsPage, setConvsPage] = useState(0);
-  const [msgsPage, setMsgsPage] = useState(0);
-  const [txPage, setTxPage] = useState(0);
   const [payPage, setPayPage] = useState(0);
   const [errPage, setErrPage] = useState(0);
   const [kirvanoPage, setKirvanoPage] = useState(0);
@@ -75,8 +70,6 @@ export default function AdminPanel() {
   // Counts for pagination
   const [userCount, setUserCount] = useState(0);
   const [convCount, setConvCount] = useState(0);
-  const [msgCount, setMsgCount] = useState(0);
-  const [txCount, setTxCount] = useState(0);
   const [payCount, setPayCount] = useState(0);
   const [errCount, setErrCount] = useState(0);
   const [kirvanoCount, setKirvanoCount] = useState(0);
@@ -87,9 +80,6 @@ export default function AdminPanel() {
 
   // Filters
   const [userSearch, setUserSearch] = useState("");
-  const [planFilter, setPlanFilter] = useState("all");
-  const [messageSearch, setMessageSearch] = useState("");
-  const [intentFilter, setIntentFilter] = useState("all");
   const [dateRange, setDateRange] = useState<DateRange>("all");
   const [errContextFilter, setErrContextFilter] = useState("all");
 
@@ -106,8 +96,6 @@ export default function AdminPanel() {
 
   // Reload on filter/page changes
   useEffect(() => { if (!loading && isAdmin) loadConversations(); }, [convsPage, dateRange]);
-  useEffect(() => { if (!loading && isAdmin) loadMessages(); }, [msgsPage, dateRange]);
-  useEffect(() => { if (!loading && isAdmin) loadTransactions(); }, [txPage, dateRange]);
   useEffect(() => { if (!loading && isAdmin) loadPayments(); }, [payPage]);
   useEffect(() => { if (!loading && isAdmin) loadErrorLogs(); }, [errPage, errContextFilter]);
   useEffect(() => { if (!loading && isAdmin) loadProfiles(); }, [usersPage]);
@@ -129,8 +117,7 @@ export default function AdminPanel() {
   const loadData = async () => {
     setLoading(true);
     await Promise.all([
-      loadProfiles(), loadConversations(), loadMessages(),
-      loadTransactions(), loadSettings(), loadPayments(), loadErrorLogs(),
+      loadProfiles(), loadConversations(), loadSettings(), loadPayments(), loadErrorLogs(),
       loadKirvanoEvents(),
     ]);
     setLastRefresh(new Date());
@@ -147,7 +134,7 @@ export default function AdminPanel() {
   const loadProfiles = async () => {
     const { data, count } = await supabase
       .from("profiles")
-      .select("id, display_name, phone_number, whatsapp_lid, created_at, plan, messages_used, messages_limit, account_status", { count: "exact" })
+      .select("id, display_name, phone_number, whatsapp_lid, created_at, account_status", { count: "exact" })
       .order("created_at", { ascending: false })
       .range(usersPage * PAGE_SIZE, (usersPage + 1) * PAGE_SIZE - 1) as any;
     if (data) {
@@ -189,34 +176,6 @@ export default function AdminPanel() {
     if (df) q = q.gte("started_at", df);
     const { data, count } = await q.range(convsPage * PAGE_SIZE, (convsPage + 1) * PAGE_SIZE - 1) as any;
     if (data) { setConversations(data); setConvCount(count || 0); }
-  };
-
-  const loadMessages = async () => {
-    let q = supabase.from("messages")
-      .select("id, role, content, created_at, intent, conversation_id", { count: "exact" })
-      .order("created_at", { ascending: false });
-    const df = getDateFilter(dateRange);
-    if (df) q = q.gte("created_at", df);
-    const { data, count } = await q.range(msgsPage * PAGE_SIZE, (msgsPage + 1) * PAGE_SIZE - 1) as any;
-    if (data) {
-      setMessages(data);
-      setMsgCount(count || 0);
-      setStats(s => ({ ...s, totalMessages: count || 0 }));
-    }
-  };
-
-  const loadTransactions = async () => {
-    let q = supabase.from("transactions")
-      .select("id, description, amount, type, category, transaction_date, user_id", { count: "exact" })
-      .order("transaction_date", { ascending: false });
-    const df = getDateFilter(dateRange);
-    if (df) q = q.gte("transaction_date", df);
-    const { data, count } = await q.range(txPage * PAGE_SIZE, (txPage + 1) * PAGE_SIZE - 1) as any;
-    if (data) {
-      setTransactions(data);
-      setTxCount(count || 0);
-      setStats(s => ({ ...s, totalTransactions: count || 0 }));
-    }
   };
 
   const loadPayments = async () => {
@@ -272,7 +231,7 @@ export default function AdminPanel() {
 
   const approveUser = async (userId: string) => {
     setApprovingId(userId);
-    const { error } = await (supabase.from("profiles").update({ account_status: "active", plan: "starter" } as any).eq("id", userId) as any);
+    const { error } = await (supabase.from("profiles").update({ account_status: "active" } as any).eq("id", userId) as any);
     if (error) toast.error("Erro ao aprovar");
     else { toast.success("Conta aprovada!"); await loadProfiles(); }
     setApprovingId(null);
@@ -308,19 +267,10 @@ export default function AdminPanel() {
 
   const filteredProfiles = profiles.filter(p => {
     const matchSearch = !userSearch || (p.display_name || "").toLowerCase().includes(userSearch.toLowerCase());
-    const matchPlan = planFilter === "all" || p.plan === planFilter;
-    return matchSearch && matchPlan;
+    return matchSearch;
   });
 
   const pendingProfiles = profiles.filter(p => p.account_status === "pending");
-
-  const filteredMessages = messages.filter(m => {
-    const matchSearch = !messageSearch || m.content?.toLowerCase().includes(messageSearch.toLowerCase());
-    const matchIntent = intentFilter === "all" || m.intent === intentFilter;
-    return matchSearch && matchIntent;
-  });
-
-  const uniqueIntents = [...new Set(messages.map(m => m.intent).filter(Boolean))];
 
   const getUserName = (userId: string) => {
     const p = profiles.find(pr => pr.id === userId);
@@ -370,7 +320,7 @@ export default function AdminPanel() {
   };
 
   const DateFilter = () => (
-    <Select value={dateRange} onValueChange={v => { setDateRange(v as DateRange); setConvsPage(0); setMsgsPage(0); setTxPage(0); }}>
+    <Select value={dateRange} onValueChange={v => { setDateRange(v as DateRange); setConvsPage(0); }}>
       <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
       <SelectContent>
         <SelectItem value="today">Hoje</SelectItem>
@@ -458,16 +408,6 @@ export default function AdminPanel() {
           <p className="text-xs text-muted-foreground">WhatsApp</p>
         </CardContent></Card>
         <Card><CardContent className="pt-4 text-center">
-          <MessageSquare className="h-5 w-5 mx-auto text-blue-400 mb-1" />
-          <p className="text-2xl font-bold">{stats.totalMessages}</p>
-          <p className="text-xs text-muted-foreground">Mensagens</p>
-        </CardContent></Card>
-        <Card><CardContent className="pt-4 text-center">
-          <Wallet className="h-5 w-5 mx-auto text-yellow-400 mb-1" />
-          <p className="text-2xl font-bold">{stats.totalTransactions}</p>
-          <p className="text-xs text-muted-foreground">Transações</p>
-        </CardContent></Card>
-        <Card><CardContent className="pt-4 text-center">
           <CreditCard className="h-5 w-5 mx-auto text-emerald-400 mb-1" />
           <p className="text-2xl font-bold text-emerald-400">R${stats.totalRevenue.toFixed(0)}</p>
           <p className="text-xs text-muted-foreground">Receita</p>
@@ -497,8 +437,6 @@ export default function AdminPanel() {
               </TabsTrigger>
               <TabsTrigger value="users"><Users className="h-4 w-4 mr-1" />Usuários</TabsTrigger>
               <TabsTrigger value="conversations"><MessageSquare className="h-4 w-4 mr-1" />Conversas</TabsTrigger>
-              <TabsTrigger value="messages"><MessageCircle className="h-4 w-4 mr-1" />Mensagens</TabsTrigger>
-              <TabsTrigger value="transactions"><Wallet className="h-4 w-4 mr-1" />Transações</TabsTrigger>
               <TabsTrigger value="payments"><CreditCard className="h-4 w-4 mr-1" />Pagamentos</TabsTrigger>
               <TabsTrigger value="kirvano" onClick={() => { loadKirvanoEvents(); setKirvanoLiveRefresh(true); }} className="relative">
                 <Webhook className="h-4 w-4 mr-1" />Kirvano
@@ -562,15 +500,6 @@ export default function AdminPanel() {
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                     <Input placeholder="Buscar por nome..." value={userSearch} onChange={e => setUserSearch(e.target.value)} className="pl-9" />
                   </div>
-                  <Select value={planFilter} onValueChange={setPlanFilter}>
-                    <SelectTrigger className="w-40"><SelectValue placeholder="Plano" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Todos</SelectItem>
-                      <SelectItem value="starter">Starter</SelectItem>
-                      <SelectItem value="pro">Pro</SelectItem>
-                      <SelectItem value="business">Business</SelectItem>
-                    </SelectContent>
-                  </Select>
                   <Button size="sm" variant="outline" onClick={() => exportCSV(filteredProfiles, "usuarios.csv")}>
                     <Download className="h-4 w-4 mr-1" /> CSV
                   </Button>
@@ -579,16 +508,15 @@ export default function AdminPanel() {
               <CardContent>
                 <Table>
                   <TableHeader><TableRow>
-                    <TableHead>Nome</TableHead><TableHead>Telefone</TableHead><TableHead>Plano</TableHead>
+                    <TableHead>Nome</TableHead><TableHead>Telefone</TableHead>
                     <TableHead>Status</TableHead><TableHead>WhatsApp</TableHead><TableHead>Cadastro</TableHead>
-                    <TableHead>Msgs</TableHead><TableHead></TableHead>
+                    <TableHead></TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
                     {filteredProfiles.map(p => (
                       <TableRow key={p.id}>
                         <TableCell className="font-medium">{p.display_name || "—"}</TableCell>
                         <TableCell className="text-sm">{p.phone_number || "—"}</TableCell>
-                        <TableCell><Badge variant="secondary">{p.plan}</Badge></TableCell>
                         <TableCell>{statusBadge(p.account_status)}</TableCell>
                         <TableCell>
                           <Badge className={p.whatsapp_lid || p.phone_number ? "bg-green-500/20 text-green-300 border-green-500/30" : "bg-muted text-muted-foreground"}>
@@ -596,7 +524,6 @@ export default function AdminPanel() {
                           </Badge>
                         </TableCell>
                         <TableCell className="text-sm">{formatDate(p.created_at)}</TableCell>
-                        <TableCell className="text-sm">{p.messages_used}/{p.messages_limit}</TableCell>
                         <TableCell>
                           <Button size="sm" variant="ghost" onClick={() => { setSelectedUserId(p.id); setSelectedUserName(p.display_name || "Usuário"); }}>
                             <Eye className="h-4 w-4 mr-1" /> Ver
@@ -644,90 +571,6 @@ export default function AdminPanel() {
                 </Table>
                 {conversations.length === 0 && <p className="text-center text-muted-foreground py-8">Nenhuma conversa</p>}
                 <PaginationControls page={convsPage} setPage={setConvsPage} total={convCount} />
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* MESSAGES */}
-          <TabsContent value="messages">
-            <Card>
-              <CardHeader>
-                <div className="flex flex-col sm:flex-row gap-3">
-                  <div className="relative flex-1">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                    <Input placeholder="Buscar conteúdo..." value={messageSearch} onChange={e => setMessageSearch(e.target.value)} className="pl-9" />
-                  </div>
-                  <Select value={intentFilter} onValueChange={setIntentFilter}>
-                    <SelectTrigger className="w-40"><SelectValue placeholder="Intent" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Todos</SelectItem>
-                      {uniqueIntents.map(i => <SelectItem key={i} value={i!}>{i}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                  <DateFilter />
-                  <Button size="sm" variant="outline" onClick={() => exportCSV(filteredMessages, "mensagens.csv")}>
-                    <Download className="h-4 w-4 mr-1" /> CSV
-                  </Button>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <Table>
-                  <TableHeader><TableRow>
-                    <TableHead>Data</TableHead><TableHead>Role</TableHead><TableHead>Intent</TableHead><TableHead>Mensagem</TableHead>
-                  </TableRow></TableHeader>
-                  <TableBody>
-                    {filteredMessages.map(m => (
-                      <TableRow key={m.id}>
-                        <TableCell className="text-sm whitespace-nowrap">{formatDate(m.created_at)}</TableCell>
-                        <TableCell><Badge variant={m.role === "assistant" ? "default" : "secondary"}>{m.role}</Badge></TableCell>
-                        <TableCell className="text-sm">{m.intent || "—"}</TableCell>
-                        <TableCell className="text-sm max-w-md truncate">{m.content?.substring(0, 120)}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-                {filteredMessages.length === 0 && <p className="text-center text-muted-foreground py-8">Nenhuma mensagem</p>}
-                <PaginationControls page={msgsPage} setPage={setMsgsPage} total={msgCount} />
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* TRANSACTIONS */}
-          <TabsContent value="transactions">
-            <Card>
-              <CardHeader>
-                <div className="flex items-center gap-3">
-                  <DateFilter />
-                  <Button size="sm" variant="outline" onClick={() => exportCSV(transactions, "transacoes.csv")}>
-                    <Download className="h-4 w-4 mr-1" /> CSV
-                  </Button>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <Table>
-                  <TableHeader><TableRow>
-                    <TableHead>Data</TableHead><TableHead>Usuário</TableHead><TableHead>Descrição</TableHead>
-                    <TableHead>Tipo</TableHead><TableHead>Categoria</TableHead><TableHead>Valor</TableHead>
-                  </TableRow></TableHeader>
-                  <TableBody>
-                    {transactions.map(t => (
-                      <TableRow key={t.id}>
-                        <TableCell className="text-sm">{formatDate(t.transaction_date)}</TableCell>
-                        <TableCell>{getUserName(t.user_id)}</TableCell>
-                        <TableCell>{t.description}</TableCell>
-                        <TableCell>
-                          <Badge className={t.type === "income" ? "bg-green-500/20 text-green-300" : "bg-red-500/20 text-red-300"}>
-                            {t.type === "income" ? "Receita" : "Gasto"}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>{t.category}</TableCell>
-                        <TableCell className="font-medium">R$ {Number(t.amount).toFixed(2)}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-                {transactions.length === 0 && <p className="text-center text-muted-foreground py-8">Nenhuma transação</p>}
-                <PaginationControls page={txPage} setPage={setTxPage} total={txCount} />
               </CardContent>
             </Card>
           </TabsContent>

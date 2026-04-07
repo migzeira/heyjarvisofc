@@ -1,18 +1,22 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Check } from "lucide-react";
-import { toast } from "sonner";
+import { Check, Zap, ExternalLink } from "lucide-react";
+import { format } from "date-fns";
+import { ptBR } from "date-fns/locale";
 
-const plans = [
-  { id: "starter", name: "Starter", price: "R$ 49/mês", limit: 500, features: ["500 mensagens/mês", "Módulo financeiro", "Módulo agenda", "Painel de controle", "Suporte por email"] },
-  { id: "pro", name: "Pro", price: "R$ 99/mês", limit: 2000, features: ["2.000 mensagens/mês", "Todos os módulos", "Integrações (Notion, Google)", "Respostas rápidas", "Suporte prioritário"] },
-  { id: "business", name: "Business", price: "R$ 199/mês", limit: 999999, features: ["Mensagens ilimitadas", "Tudo do Pro", "Suporte 24/7", "API dedicada", "Múltiplos agentes"] },
+const FEATURES = [
+  "Assistente pessoal 24/7 no WhatsApp",
+  "Agenda e compromissos inteligentes",
+  "Lembretes automáticos",
+  "Anotações e notas rápidas",
+  "Controle financeiro",
+  "Briefing diário personalizado",
+  "Sem limite de mensagens",
 ];
 
 export default function MeuPlano() {
@@ -23,78 +27,100 @@ export default function MeuPlano() {
   useEffect(() => { if (user) loadData(); }, [user]);
 
   const loadData = async () => {
-    const { data } = await supabase.from("profiles").select("*").eq("id", user!.id).single();
+    const { data } = await supabase.from("profiles").select("account_status, access_until, kirvano_subscription_id, plan, created_at").eq("id", user!.id).single();
     setProfile(data);
     setLoading(false);
   };
 
-  const handlePlanChange = async (planId: string) => {
-    const plan = plans.find(p => p.id === planId);
-    if (!plan) return;
-    const { error } = await supabase.from("profiles").update({ plan: planId, messages_limit: plan.limit }).eq("id", user!.id);
-    if (error) toast.error("Erro ao alterar plano");
-    else { toast.success(`Plano alterado para ${plan.name}!`); loadData(); }
-  };
+  if (loading) return <div className="space-y-4 max-w-lg"><Skeleton className="h-40" /><Skeleton className="h-64" /></div>;
+  if (!profile) return null;
 
-  if (loading) return <div className="space-y-4"><Skeleton className="h-32" /><div className="grid md:grid-cols-3 gap-4">{[1,2,3].map(i => <Skeleton key={i} className="h-64" />)}</div></div>;
-
-  const currentPlan = plans.find(p => p.id === profile?.plan) || plans[0];
-  const usagePercent = profile ? Math.min((profile.messages_used / profile.messages_limit) * 100, 100) : 0;
+  const isActive = profile.account_status === "active";
+  const isSuspended = profile.account_status === "suspended";
+  const accessUntil = profile.access_until ? new Date(profile.access_until) : null;
+  const isCancelling = isActive && accessUntil && accessUntil > new Date();
+  const isAnnual = (profile.plan as string)?.includes("anual") || (profile.plan as string)?.includes("annual") || (profile.plan as string)?.includes("annually");
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Meu Plano</h1>
+    <div className="space-y-6 max-w-lg">
+      <h1 className="text-2xl font-bold">Minha Assinatura</h1>
 
+      {/* Status card */}
       <Card className="bg-card border-border">
         <CardContent className="pt-6">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
-            <div>
+          <div className="flex items-start justify-between gap-4">
+            <div className="space-y-1">
               <div className="flex items-center gap-2">
-                <h2 className="text-xl font-bold">{currentPlan.name}</h2>
-                <Badge className="bg-primary/20 text-primary">Atual</Badge>
+                <Zap className="h-5 w-5 text-primary" />
+                <h2 className="text-xl font-bold">Maya</h2>
+                {isAnnual
+                  ? <Badge className="bg-primary/20 text-primary border-primary/30">Anual</Badge>
+                  : <Badge className="bg-blue-500/20 text-blue-300 border-blue-500/30">Mensal</Badge>
+                }
               </div>
-              <p className="text-muted-foreground text-sm">{currentPlan.price}</p>
+              <p className="text-sm text-muted-foreground">Acesso completo a todos os recursos</p>
             </div>
+
+            {isActive && !isCancelling && (
+              <Badge className="bg-green-500/20 text-green-300 border-green-500/30 shrink-0">Ativa</Badge>
+            )}
+            {isCancelling && (
+              <Badge className="bg-yellow-500/20 text-yellow-300 border-yellow-500/30 shrink-0">Cancelada</Badge>
+            )}
+            {isSuspended && (
+              <Badge className="bg-red-500/20 text-red-300 border-red-500/30 shrink-0">Suspensa</Badge>
+            )}
           </div>
-          <div className="space-y-2">
-            <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">Mensagens usadas</span>
-              <span>{profile?.messages_used ?? 0} / {profile?.messages_limit ?? 500}</span>
-            </div>
-            <Progress value={usagePercent} className="h-2" />
-          </div>
+
+          {isCancelling && accessUntil && (
+            <p className="mt-4 text-sm text-yellow-300 bg-yellow-500/10 border border-yellow-500/20 rounded-lg px-3 py-2">
+              ⚠️ Assinatura cancelada. Seu acesso continua até{" "}
+              <span className="font-semibold">{format(accessUntil, "dd 'de' MMMM 'de' yyyy", { locale: ptBR })}</span>.
+            </p>
+          )}
+
+          {isSuspended && (
+            <p className="mt-4 text-sm text-red-300 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+              🚫 Acesso suspenso. Para reativar, renove sua assinatura abaixo.
+            </p>
+          )}
+
+          {isActive && !isCancelling && (
+            <p className="mt-4 text-sm text-green-300 bg-green-500/10 border border-green-500/20 rounded-lg px-3 py-2">
+              ✅ Tudo ativo! A Maya está disponível 24/7 para você no WhatsApp.
+            </p>
+          )}
         </CardContent>
       </Card>
 
-      <div className="grid md:grid-cols-3 gap-6">
-        {plans.map(p => (
-          <Card key={p.id} className={`bg-card border-border ${p.id === profile?.plan ? "ring-1 ring-primary" : ""}`}>
-            <CardHeader className="text-center">
-              <CardTitle>{p.name}</CardTitle>
-              <CardDescription>{p.price}</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <ul className="space-y-2 mb-6">
-                {p.features.map((f, i) => (
-                  <li key={i} className="flex items-center gap-2 text-sm">
-                    <Check className="h-4 w-4 text-primary flex-shrink-0" />
-                    <span className="text-muted-foreground">{f}</span>
-                  </li>
-                ))}
-              </ul>
-              {p.id === profile?.plan ? (
-                <Button variant="outline" className="w-full" disabled>Plano atual</Button>
-              ) : (
-                <Button className="w-full" variant={plans.indexOf(p) > plans.findIndex(pl => pl.id === profile?.plan) ? "default" : "outline"} onClick={() => handlePlanChange(p.id)}>
-                  {plans.indexOf(p) > plans.findIndex(pl => pl.id === profile?.plan) ? "Fazer upgrade" : "Fazer downgrade"}
-                </Button>
-              )}
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+      {/* O que está incluso */}
+      <Card className="bg-card border-border">
+        <CardHeader>
+          <CardTitle className="text-base">O que está incluso</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ul className="space-y-2">
+            {FEATURES.map((f, i) => (
+              <li key={i} className="flex items-center gap-2 text-sm">
+                <Check className="h-4 w-4 text-primary shrink-0" />
+                <span className="text-muted-foreground">{f}</span>
+              </li>
+            ))}
+          </ul>
+        </CardContent>
+      </Card>
 
-      <p className="text-sm text-muted-foreground text-center">Dúvidas sobre planos? Fale conosco no WhatsApp</p>
+      {/* Ação */}
+      {(isSuspended || isCancelling) && (
+        <Button className="w-full" onClick={() => window.open("https://pay.kirvano.com/maya", "_blank")}>
+          <ExternalLink className="h-4 w-4 mr-2" />
+          {isSuspended ? "Reativar assinatura" : "Renovar assinatura"}
+        </Button>
+      )}
+
+      <p className="text-xs text-muted-foreground text-center">
+        Sua assinatura é gerenciada pela Kirvano. Em caso de dúvidas sobre cobranças, acesse o painel da Kirvano ou fale com nosso suporte.
+      </p>
     </div>
   );
 }
