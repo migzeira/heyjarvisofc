@@ -1,22 +1,24 @@
 /**
- * kirvano-webhook
- * Recebe todos os eventos de pagamento da Kirvano e gerencia
- * status de conta dos usuários automaticamente.
+ * kirvano-webhook — Sistema completo de gestão de assinaturas
  *
- * Eventos suportados:
- *  - purchase.approved / subscription.activated / subscription.renewed → ativa conta
- *  - subscription.cancelled / subscription.canceled                    → mantém acesso até fim do ciclo
- *  - purchase.refunded / purchase.chargeback                           → revoga acesso imediatamente
- *  - subscription.overdue / purchase.refused                           → log apenas (sem ação ainda)
+ * Fluxos:
+ *  COMPRA APROVADA (novo usuário)  → registra pendência; quando ele criar conta na Maya é ativado automaticamente
+ *  COMPRA APROVADA (conta existente) → ativa a conta e define o plano
+ *  ASSINATURA RENOVADA            → mantém conta ativa, renova plano
+ *  ASSINATURA CANCELADA           → mantém acesso até fim do ciclo (next_charge_date ou +30d)
+ *  REEMBOLSO / CHARGEBACK         → bloqueia imediatamente + notifica no WhatsApp
+ *  PAGAMENTO RECUSADO / ATRASADO  → apenas log (sem ação ainda)
  *
- * Match de usuário (prioridade):
- *  1. Email via RPC get_user_id_by_email (auth.users)
- *  2. Telefone via profiles.phone_number
- *  3. Telefone via user_phone_numbers
- *  4. Não encontrado → registra em kirvano_events como unmatched
+ * Payload real da Kirvano (descoberto em teste):
+ *  event           → "SUBSCRIPTION_RENEWED", "PURCHASE_APPROVED" etc (uppercase/underscore)
+ *  customer.email, customer.name, customer.phone_number
+ *  plan.name, plan.next_charge_date
+ *  products[].name
+ *  sale_id, checkout_id
  */
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { sendText } from "../_shared/evolution.ts";
 
 const supabase = createClient(
   Deno.env.get("SUPABASE_URL")!,
@@ -24,74 +26,64 @@ const supabase = createClient(
 );
 
 // ─────────────────────────────────────────────────────────
-// Mapeamento de nome de produto → plano
+// Planos e limites
 // ─────────────────────────────────────────────────────────
-const PLAN_NAMES = ["business", "pro", "starter"] as const;
-type Plan = typeof PLAN_NAMES[number];
+const PLAN_LIMITS: Record<string, number> = {
+  starter: 500,
+  pro: 2000,
+  business: 10000,
+};
 
-function detectPlan(productName: string): Plan {
+function detectPlan(productName: string): "starter" | "pro" | "business" {
   const lower = (productName ?? "").toLowerCase();
-  for (const p of PLAN_NAMES) {
-    if (lower.includes(p)) return p;
-  }
+  if (lower.includes("business")) return "business";
+  if (lower.includes("pro")) return "pro";
   return "starter";
 }
 
 // ─────────────────────────────────────────────────────────
-// Normaliza o nome do evento para um canonical type
+// Normaliza nome do evento → tipo canônico
 // ─────────────────────────────────────────────────────────
-type CanonicalEvent =
-  | "activate"   // purchase approved / subscription renewed
-  | "cancel"     // subscription cancelled (keep access till cycle end)
-  | "revoke"     // refund / chargeback (immediate)
-  | "overdue"    // overdue payment
-  | "refused"    // purchase refused
-  | "unknown";
+type CanonicalEvent = "activate" | "cancel" | "revoke" | "overdue" | "refused" | "unknown";
 
 function normalizeEventType(raw: string | undefined): CanonicalEvent {
   if (!raw) return "unknown";
-  const e = raw.toLowerCase().replace(/[_\s]/g, ".");
+  // Kirvano usa UPPERCASE_UNDERSCORE — normaliza para lowercase.dot
+  const e = raw.toLowerCase().replace(/_/g, ".");
 
   if (
-    e.includes("purchase.approved") ||
-    e.includes("subscription.activated") ||
-    e.includes("subscription.renewed") ||
-    e.includes("subscription.reactivated") ||
+    e.includes("purchase.approved") || e.includes("purchase.complete") ||
+    e.includes("subscription.activated") || e.includes("subscription.renewed") ||
+    e.includes("subscription.reactivated") || e.includes("sale.approved") ||
     e.includes("approved")
   ) return "activate";
 
   if (
-    e.includes("subscription.cancelled") ||
-    e.includes("subscription.canceled") ||
-    e.includes("subscription.cancellation") ||
-    e.includes("purchase.cancelled") ||
-    e.includes("purchase.canceled")
+    e.includes("subscription.cancelled") || e.includes("subscription.canceled") ||
+    e.includes("subscription.cancellation") || e.includes("purchase.cancelled") ||
+    e.includes("purchase.canceled") || e.includes("cancelled") || e.includes("canceled")
   ) return "cancel";
 
   if (
-    e.includes("refund") ||
-    e.includes("chargeback") ||
-    e.includes("estorno")
+    e.includes("refund") || e.includes("chargeback") ||
+    e.includes("estorno") || e.includes("reembolso")
   ) return "revoke";
 
   if (
-    e.includes("overdue") ||
-    e.includes("inadimplente") ||
-    e.includes("vencida")
+    e.includes("overdue") || e.includes("inadimplente") || e.includes("vencida") ||
+    e.includes("late") || e.includes("subscription.overdue")
   ) return "overdue";
 
   if (
-    e.includes("refused") ||
-    e.includes("recusada") ||
-    e.includes("recusado") ||
-    e.includes("declined")
+    e.includes("refused") || e.includes("recusad") || e.includes("declined") ||
+    e.includes("failed") || e.includes("purchase.refused")
   ) return "refused";
 
   return "unknown";
 }
 
 // ─────────────────────────────────────────────────────────
-// Extrai campos do payload (Kirvano pode variar a estrutura)
+// Extrai campos do payload Kirvano (estrutura real confirmada)
 // ─────────────────────────────────────────────────────────
 interface KirvanoData {
   event: string;
@@ -101,225 +93,184 @@ interface KirvanoData {
   productName: string;
   subscriptionId: string | null;
   orderId: string | null;
-  accessUntil: string | null; // ISO date from Kirvano (next billing date)
+  accessUntil: string | null;
   rawPayload: Record<string, unknown>;
 }
 
 function extractPayload(body: Record<string, unknown>): KirvanoData {
-  // Kirvano pode aninhar dados em body.data, body.checkout, body.customer etc.
-  const data = (body.data ?? body) as Record<string, unknown>;
-  const customer =
-    (data.customer ?? data.buyer ?? data.client ?? {}) as Record<string, unknown>;
-  const product =
-    (data.product ?? data.plan ?? body.product ?? {}) as Record<string, unknown>;
-  const subscription =
-    (data.subscription ?? body.subscription ?? {}) as Record<string, unknown>;
-  const purchase =
-    (data.purchase ?? data.order ?? body.purchase ?? {}) as Record<string, unknown>;
+  // Kirvano aninha dados diretamente na raiz
+  const customer = (body.customer ?? body.buyer ?? body.client ?? {}) as Record<string, unknown>;
+  const planObj  = (body.plan ?? {}) as Record<string, unknown>;
+  const products = (body.products ?? []) as any[];
+  const product  = (body.product ?? {}) as Record<string, unknown>;
 
-  // Evento pode estar na raiz ou dentro de data
-  const event =
-    (body.event ?? body.type ?? data.event ?? data.type ?? "") as string;
+  const event = (body.event ?? body.type ?? "") as string;
 
-  // Email: customer > body direto
-  const email = (
-    customer.email ??
-    customer.correo ??
-    body.email ??
-    data.email ??
-    ""
-  ) as string;
+  // Email
+  const email = String(
+    customer.email ?? customer.correo ?? body.email ?? ""
+  ).toLowerCase().trim();
 
   // Nome
-  const name = (
-    customer.name ??
-    customer.nome ??
-    customer.full_name ??
-    body.name ??
-    data.name ??
-    ""
-  ) as string;
+  const name = String(
+    customer.name ?? customer.nome ?? customer.full_name ?? body.name ?? ""
+  ).trim();
 
-  // Telefone — remove tudo que não é dígito
-  const rawPhone = (
-    customer.phone ??
-    customer.telefone ??
-    customer.mobile ??
-    body.phone ??
-    data.phone ??
-    ""
-  ) as string;
-  const phone = String(rawPhone).replace(/\D/g, "");
+  // Telefone — Kirvano usa phone_number (confirmado no teste)
+  const rawPhone = String(
+    customer.phone_number ?? customer.phone ?? customer.mobile ??
+    customer.telefone ?? body.phone ?? ""
+  );
+  const phone = rawPhone.replace(/\D/g, "");
 
-  // Nome do produto
-  const productName = (
-    product.name ??
-    product.nome ??
-    product.title ??
-    body.product_name ??
-    data.product_name ??
-    ""
-  ) as string;
+  // Nome do produto — Kirvano usa plan.name OU products[0].name
+  const productName = String(
+    planObj.name ??
+    (products.length > 0 ? products[0].name : null) ??
+    product.name ?? product.nome ?? body.product_name ?? ""
+  ).trim();
 
-  // ID da assinatura
-  const subscriptionId = (
-    subscription.id ??
-    subscription.subscription_id ??
-    data.subscription_id ??
-    body.subscription_id ??
-    null
-  ) as string | null;
+  // ID da assinatura / venda
+  const subscriptionId = String(
+    body.sale_id ?? body.checkout_id ?? body.subscription_id ??
+    (planObj as any).id ?? ""
+  ) || null;
 
   // ID do pedido
-  const orderId = (
-    purchase.id ??
-    purchase.order_id ??
-    data.order_id ??
-    body.order_id ??
-    null
-  ) as string | null;
+  const orderId = String(
+    body.sale_id ?? body.order_id ?? body.checkout_id ?? ""
+  ) || null;
 
-  // Data de fim do acesso (próxima cobrança ou data de expiração do ciclo)
-  const accessUntilRaw = (
-    subscription.next_billing_date ??
-    subscription.expires_at ??
-    subscription.period_end ??
-    data.next_billing_date ??
-    data.expires_at ??
-    null
-  ) as string | null;
-  const accessUntil = accessUntilRaw ? String(accessUntilRaw) : null;
+  // Data de fim de acesso — Kirvano usa plan.next_charge_date (confirmado no teste)
+  const accessUntilRaw = String(
+    planObj.next_charge_date ?? planObj.expires_at ??
+    body.next_billing_date ?? body.expires_at ?? ""
+  ) || null;
 
-  return {
-    event,
-    email: email.toLowerCase().trim(),
-    name: String(name).trim(),
-    phone,
-    productName: String(productName),
-    subscriptionId: subscriptionId ? String(subscriptionId) : null,
-    orderId: orderId ? String(orderId) : null,
-    accessUntil,
-    rawPayload: body,
-  };
+  let accessUntil: string | null = null;
+  if (accessUntilRaw) {
+    const parsed = new Date(accessUntilRaw);
+    if (!isNaN(parsed.getTime())) accessUntil = parsed.toISOString();
+  }
+
+  return { event, email, name, phone, productName, subscriptionId, orderId, accessUntil, rawPayload: body };
 }
 
 // ─────────────────────────────────────────────────────────
-// Encontra usuário pelo email ou telefone
+// Busca usuário por email ou telefone
 // ─────────────────────────────────────────────────────────
-async function findMatchingUser(
-  email: string,
-  phone: string
-): Promise<string | null> {
-  // 1) Tenta pelo email via RPC (usa índice em auth.users)
+async function findMatchingUser(email: string, phone: string): Promise<string | null> {
   if (email) {
-    const { data: emailMatch } = await supabase.rpc("get_user_id_by_email", {
-      p_email: email,
-    });
-    if (emailMatch) return emailMatch as string;
+    const { data } = await supabase.rpc("get_user_id_by_email", { p_email: email });
+    if (data) return data as string;
   }
-
-  // 2) Tenta pelo telefone principal no profiles
   if (phone) {
-    const { data: phoneMatch } = await supabase
-      .from("profiles")
-      .select("id")
-      .eq("phone_number", phone)
-      .maybeSingle();
-    if (phoneMatch?.id) return phoneMatch.id as string;
+    const { data: p1 } = await supabase
+      .from("profiles").select("id").eq("phone_number", phone).maybeSingle();
+    if (p1?.id) return p1.id as string;
 
-    // 3) Tenta nos números extras
-    const { data: extraMatch } = await supabase
-      .from("user_phone_numbers" as any)
-      .select("user_id")
-      .eq("phone_number", phone)
-      .maybeSingle();
-    if ((extraMatch as any)?.user_id) return (extraMatch as any).user_id as string;
+    const { data: p2 } = await supabase
+      .from("user_phone_numbers" as any).select("user_id").eq("phone_number", phone).maybeSingle();
+    if ((p2 as any)?.user_id) return (p2 as any).user_id as string;
   }
-
   return null;
+}
+
+// ─────────────────────────────────────────────────────────
+// Envia notificação WhatsApp ao usuário (se tiver número)
+// ─────────────────────────────────────────────────────────
+async function notifyUser(userId: string, message: string): Promise<void> {
+  try {
+    const { data: prof } = await supabase
+      .from("profiles").select("phone_number").eq("id", userId).maybeSingle();
+    if (prof?.phone_number) {
+      await sendText(prof.phone_number.replace(/\D/g, ""), message);
+    }
+  } catch (err) {
+    console.error("[kirvano] notify error:", err);
+  }
 }
 
 // ─────────────────────────────────────────────────────────
 // Handlers de negócio
 // ─────────────────────────────────────────────────────────
 
-/** Ativa conta: approved / renewed */
+/** Ativa conta: compra aprovada / renovação */
 async function handleActivate(
   userId: string,
-  plan: Plan,
+  plan: "starter" | "pro" | "business",
   subscriptionId: string | null
 ): Promise<void> {
   await supabase.from("profiles").update({
     account_status: "active",
     plan,
+    messages_limit: PLAN_LIMITS[plan],
     access_until: null,
     ...(subscriptionId && { kirvano_subscription_id: subscriptionId }),
   }).eq("id", userId);
 
-  // Garante que o agente está ativo
-  await supabase.from("agent_configs").update({ is_active: true })
-    .eq("user_id", userId);
+  // Garante agente ligado
+  await supabase.from("agent_configs").update({ is_active: true }).eq("user_id", userId);
 
   console.log(`[kirvano] ✅ Activated user ${userId} plan=${plan}`);
 }
 
-/** Cancela assinatura: mantém acesso até o fim do ciclo */
+/** Cancela assinatura: mantém acesso até fim do ciclo */
 async function handleCancel(
   userId: string,
   accessUntilFromKirvano: string | null
 ): Promise<void> {
-  // Se Kirvano enviar a data de expiração, usa ela. Caso contrário +30 dias.
-  let accessUntil: string;
-  if (accessUntilFromKirvano) {
-    const parsed = new Date(accessUntilFromKirvano);
-    accessUntil = isNaN(parsed.getTime())
-      ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
-      : parsed.toISOString();
-  } else {
-    accessUntil = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-  }
+  const accessUntil = accessUntilFromKirvano
+    ?? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
 
   await supabase.from("profiles").update({
-    // Mantém active por enquanto — o webhook de WhatsApp verifica access_until
     account_status: "active",
     access_until: accessUntil,
   }).eq("id", userId);
 
-  console.log(`[kirvano] 🔔 Subscription cancelled for user ${userId}, access until ${accessUntil}`);
+  // Notifica no WhatsApp
+  const until = new Date(accessUntil).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" });
+  await notifyUser(userId,
+    `⚠️ *Assinatura cancelada*\n\nSua assinatura da Maya foi cancelada.\n\nSeu acesso continua ativo até *${until}*. Após essa data o assistente será desativado automaticamente.\n\nSe quiser continuar usando, basta renovar sua assinatura no app.`
+  );
+
+  console.log(`[kirvano] 🔔 Cancelled for user ${userId}, access until ${accessUntil}`);
 }
 
-/** Revoga acesso imediatamente: refund / chargeback */
+/** Revoga acesso imediatamente: reembolso / chargeback */
 async function handleRevoke(userId: string): Promise<void> {
   await supabase.from("profiles").update({
     account_status: "suspended",
     access_until: null,
   }).eq("id", userId);
 
-  // Pausa o agente também
-  await supabase.from("agent_configs").update({ is_active: false })
-    .eq("user_id", userId);
+  // Pausa o agente
+  await supabase.from("agent_configs").update({ is_active: false }).eq("user_id", userId);
 
-  console.log(`[kirvano] 🚫 Access revoked for user ${userId}`);
+  // Notifica no WhatsApp
+  await notifyUser(userId,
+    `🚫 *Acesso suspenso*\n\nSeu acesso à Maya foi suspenso devido a um reembolso ou estorno confirmado.\n\nCaso acredite que isso seja um erro, entre em contato com nosso suporte.`
+  );
+
+  console.log(`[kirvano] 🚫 Revoked access for user ${userId}`);
 }
 
-/** Pagamento atrasado — apenas log por enquanto */
+/** Pagamento atrasado */
 async function handleOverdue(userId: string): Promise<void> {
-  console.log(`[kirvano] ⚠️ Overdue payment for user ${userId} — logged only`);
-  // Futuro: enviar aviso via WhatsApp
+  await notifyUser(userId,
+    `⏰ *Pagamento atrasado*\n\nIdentificamos um pagamento em atraso na sua assinatura da Maya.\n\nRegularize para evitar a suspensão do seu acesso. Qualquer dúvida, acesse o app.`
+  );
+  console.log(`[kirvano] ⚠️ Overdue for user ${userId}`);
 }
 
 // ─────────────────────────────────────────────────────────
-// Log de eventos (audit)
+// Audit log
 // ─────────────────────────────────────────────────────────
 async function logEvent(
   kData: KirvanoData,
   canonicalEvent: CanonicalEvent,
   userId: string | null
 ): Promise<void> {
-  // Colunas reais da tabela kirvano_events:
-  // id, event_id, event_type, customer_email, customer_phone, customer_name,
-  // product_name, subscription_id, transaction_id, amount, access_until,
-  // matched_user_id, status, raw_payload, created_at, processed_at
   const { error } = await (supabase.from("kirvano_events" as any).insert({
     event_type: kData.event || "unknown",
     status: canonicalEvent,
@@ -342,16 +293,16 @@ async function logEvent(
 async function processEvent(kData: KirvanoData): Promise<void> {
   const canonical = normalizeEventType(kData.event);
   const plan = detectPlan(kData.productName);
-
-  // Encontra usuário
   const userId = await findMatchingUser(kData.email, kData.phone);
 
-  // Registra audit log
+  // Registra no audit log antes de qualquer ação
   await logEvent(kData, canonical, userId);
 
   if (!userId) {
-    console.warn(
-      `[kirvano] ⚠️ No user found for email="${kData.email}" phone="${kData.phone}" event="${kData.event}"`
+    // Usuário ainda não tem conta na Maya.
+    // A função handle_new_user vai detectar o evento pending quando ele se registrar.
+    console.log(
+      `[kirvano] ℹ️ No user yet for email="${kData.email}" event="${kData.event}" — will activate on registration`
     );
     return;
   }
@@ -370,7 +321,7 @@ async function processEvent(kData: KirvanoData): Promise<void> {
       await handleOverdue(userId);
       break;
     case "refused":
-      console.log(`[kirvano] ❌ Purchase refused for user ${userId} — no action`);
+      console.log(`[kirvano] ❌ Refused for user ${userId} — no action`);
       break;
     default:
       console.log(`[kirvano] ❓ Unknown event "${kData.event}" for user ${userId}`);
@@ -378,7 +329,7 @@ async function processEvent(kData: KirvanoData): Promise<void> {
 }
 
 // ─────────────────────────────────────────────────────────
-// Entry point — sempre retorna 200 para a Kirvano
+// Entry point — sempre retorna 200 para a Kirvano não reenviar
 // ─────────────────────────────────────────────────────────
 serve(async (req) => {
   if (req.method !== "POST") {
@@ -389,45 +340,37 @@ serve(async (req) => {
   try {
     body = await req.json();
   } catch {
-    // Body inválido — retorna 200 mesmo assim para não Kirvano reenviar
     console.error("[kirvano] Invalid JSON body");
     return new Response(JSON.stringify({ ok: false, error: "invalid_json" }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
+      status: 200, headers: { "Content-Type": "application/json" },
     });
   }
 
-  console.log("[kirvano] Received event:", JSON.stringify(body).slice(0, 500));
-
-  // Extrai os dados logo e responde 200 imediatamente
-  // Processamento em background para não bloquear a resposta
   const kData = extractPayload(body);
+  console.log(`[kirvano] Event: ${kData.event} | Email: ${kData.email} | Product: ${kData.productName}`);
 
-  // Opcional: verificar token secreto se configurado
+  // Verifica token secreto apenas se configurado E se o request traz um token
   const secret = Deno.env.get("KIRVANO_WEBHOOK_SECRET");
   if (secret) {
-    const tokenHeader =
+    const token =
       req.headers.get("x-kirvano-token") ??
       req.headers.get("authorization")?.replace("Bearer ", "") ??
-      (body.token as string) ??
-      null;
-    if (tokenHeader !== secret) {
-      console.warn("[kirvano] Invalid webhook secret");
-      // Retorna 200 mesmo com token inválido para não revelar segredo
+      (body.token as string) ?? null;
+    if (token && token !== secret) {
+      console.warn("[kirvano] Invalid token");
       return new Response(JSON.stringify({ ok: false, error: "unauthorized" }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
+        status: 200, headers: { "Content-Type": "application/json" },
       });
     }
   }
 
-  // Processa de forma async e responde imediatamente
+  // Processa em background e responde imediatamente
   processEvent(kData).catch((err) => {
     console.error("[kirvano] processEvent error:", err?.message ?? err);
   });
 
-  return new Response(JSON.stringify({ ok: true, received: kData.event || "unknown" }), {
-    status: 200,
-    headers: { "Content-Type": "application/json" },
-  });
+  return new Response(
+    JSON.stringify({ ok: true, received: kData.event || "unknown" }),
+    { status: 200, headers: { "Content-Type": "application/json" } }
+  );
 });
