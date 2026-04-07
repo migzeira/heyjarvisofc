@@ -402,6 +402,9 @@ Analise o pedido de lembrete e retorne JSON com EXATAMENTE esta estrutura:
 }
 
 Regras para remind_at:
+- ATENÇÃO: compare CUIDADOSAMENTE a hora atual com a hora mencionada. Se a hora mencionada ainda NÃO passou hoje, agende para HOJE mesmo.
+- Exemplo: se agora é 01:36 e o usuário disse "1h50", a hora 01:50 ainda não passou → agende para HOJE (não amanhã).
+- Exemplo: se agora é 14:00 e o usuário disse "10h", a hora 10:00 já passou → agende para amanhã.
 - Se hora mencionada já passou hoje → agendar para amanhã
 - Se não mencionou data → assume hoje (ou amanhã se hora passou)
 - "amanhã" → próximo dia
@@ -427,6 +430,30 @@ Pedido: "${message}"`;
     const parsed = JSON.parse(result) as ReminderParsed;
     // Validação básica
     if (!parsed.remind_at || !parsed.recurrence) return null;
+
+    // Guarda de segurança: se a IA agendou para amanhã mas o horário ainda não passou hoje,
+    // corrige para hoje. Isso evita erros com horários de madrugada como "1h50".
+    if (parsed.recurrence === "none") {
+      const now = new Date(nowIso);
+      const remindAt = new Date(parsed.remind_at);
+      const diffMs = remindAt.getTime() - now.getTime();
+      const diffHours = diffMs / (1000 * 60 * 60);
+
+      // Se a IA agendou para mais de 20h à frente, verifica se o mesmo horário ainda existe hoje
+      if (diffHours > 20 && diffHours < 28) {
+        const todayVersion = new Date(remindAt);
+        todayVersion.setDate(todayVersion.getDate() - 1);
+        // Se a versão de hoje ainda não passou (tem pelo menos 1 min de margem), usa ela
+        if (todayVersion.getTime() > now.getTime() + 60000) {
+          parsed.remind_at = todayVersion.toISOString().replace("Z", "-03:00").replace(/\.\d{3}/, "");
+          // Reconstrói com offset correto
+          const y = todayVersion.toLocaleString("sv-SE", { timeZone: "America/Sao_Paulo" }).slice(0, 10);
+          const t = todayVersion.toLocaleString("sv-SE", { timeZone: "America/Sao_Paulo" }).slice(11, 19);
+          parsed.remind_at = `${y}T${t}-03:00`;
+        }
+      }
+    }
+
     return parsed;
   } catch {
     return null;
