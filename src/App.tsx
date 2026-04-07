@@ -21,7 +21,6 @@ import Integracoes from "./pages/dashboard/Integracoes";
 import ConfigAgente from "./pages/dashboard/ConfigAgente";
 
 import MeuPerfil from "./pages/dashboard/MeuPerfil";
-import Lembretes from "./pages/dashboard/Lembretes";
 import AdminPanel from "./pages/admin/AdminPanel";
 import NotFound from "./pages/NotFound";
 import TermosDeUso from "./pages/TermosDeUso";
