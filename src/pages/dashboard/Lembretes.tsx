@@ -70,7 +70,7 @@ export default function Lembretes() {
   const [reminders, setReminders] = useState<Reminder[]>([]);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
-  const [filter, setFilter] = useState<"all" | "pending" | "sent">("all");
+  const [filter, setFilter] = useState<"all" | "pending" | "sent" | "recurring">("all");
 
   // Form state
   const [title, setTitle] = useState("");
@@ -87,8 +87,22 @@ export default function Lembretes() {
       .from("reminders")
       .select("*")
       .eq("user_id", user!.id)
-      .order("send_at", { ascending: true });
-    setReminders((data as any) ?? []);
+      .neq("status", "cancelled")
+      .order("created_at", { ascending: false });
+
+    // Pendentes primeiro (mais próximos de disparar no topo), depois enviados/falhados
+    const sorted = ((data as any[]) ?? []).sort((a, b) => {
+      const aIsPending = a.status === "pending";
+      const bIsPending = b.status === "pending";
+      if (aIsPending && !bIsPending) return -1;
+      if (!aIsPending && bIsPending) return 1;
+      // Dentro dos pendentes: menor send_at primeiro (próximo a disparar no topo)
+      if (aIsPending && bIsPending) return new Date(a.send_at).getTime() - new Date(b.send_at).getTime();
+      // Dentro dos enviados: mais recente primeiro
+      return new Date(b.send_at).getTime() - new Date(a.send_at).getTime();
+    });
+
+    setReminders(sorted);
     setLoading(false);
   };
 
@@ -148,10 +162,12 @@ export default function Lembretes() {
   const filtered = reminders.filter(r => {
     if (filter === "pending") return r.status === "pending";
     if (filter === "sent") return r.status === "sent";
+    if (filter === "recurring") return r.recurrence && r.recurrence !== "none";
     return true;
   });
 
   const pendingCount = reminders.filter(r => r.status === "pending").length;
+  const recurringCount = reminders.filter(r => r.recurrence && r.recurrence !== "none" && r.status === "pending").length;
 
   if (loading) return <div className="space-y-3">{[1,2,3].map(i => <Skeleton key={i} className="h-20" />)}</div>;
 
@@ -239,7 +255,7 @@ export default function Lembretes() {
 
       {/* Filtros */}
       <div className="flex gap-2 flex-wrap">
-        {(["all","pending","sent"] as const).map(f => (
+        {(["all","pending","recurring","sent"] as const).map(f => (
           <Button
             key={f}
             variant={filter === f ? "default" : "outline"}
@@ -248,6 +264,7 @@ export default function Lembretes() {
           >
             {f === "all" && "Todos"}
             {f === "pending" && <>Pendentes {pendingCount > 0 && <Badge className="ml-1.5 text-[10px] h-4 px-1">{pendingCount}</Badge>}</>}
+            {f === "recurring" && <>Recorrentes {recurringCount > 0 && <Badge className="ml-1.5 text-[10px] h-4 px-1 bg-violet-500">{recurringCount}</Badge>}</>}
             {f === "sent" && "Enviados"}
           </Button>
         ))}
