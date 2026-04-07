@@ -611,9 +611,9 @@ async function createEventAndConfirm(
 
   // Cria lembrete se solicitado (reminder_minutes >= 0 significa lembrete ativo)
   if (extracted.reminder_minutes != null && extracted.time) {
-    const [y, mo, d] = extracted.date.split("-").map(Number);
-    const [h, min] = extracted.time.split(":").map(Number);
-    const eventDateTime = new Date(y, mo - 1, d, h, min);
+    // Interpreta o horário como Brasília (UTC-3) usando offset explícito
+    const timeStr = extracted.time.length === 5 ? extracted.time : extracted.time.slice(0, 5);
+    const eventDateTime = new Date(`${extracted.date}T${timeStr}:00-03:00`);
     const reminderTime = new Date(
       eventDateTime.getTime() - extracted.reminder_minutes * 60 * 1000
     );
@@ -805,9 +805,9 @@ async function applyEventUpdate(
     const finalTime = updates.event_time ?? originalData.event_time;
 
     if (finalTime) {
-      const [y, mo, d] = finalDate.split("-").map(Number);
-      const [h, min] = finalTime.split(":").map(Number);
-      const eventDt = new Date(y, mo - 1, d, h, min);
+      // Interpreta o horário como Brasília (UTC-3) usando offset explícito
+      const finalTimeStr = finalTime.length >= 5 ? finalTime.slice(0, 5) : finalTime;
+      const eventDt = new Date(`${finalDate}T${finalTimeStr}:00-03:00`);
       const remindDt = new Date(eventDt.getTime() - reminderMinutes * 60 * 1000);
 
       if (remindDt > new Date()) {
