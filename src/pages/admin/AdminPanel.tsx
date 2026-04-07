@@ -502,7 +502,7 @@ export default function AdminPanel() {
               <TabsTrigger value="payments"><CreditCard className="h-4 w-4 mr-1" />Pagamentos</TabsTrigger>
               <TabsTrigger value="kirvano" onClick={() => { loadKirvanoEvents(); setKirvanoLiveRefresh(true); }} className="relative">
                 <Webhook className="h-4 w-4 mr-1" />Kirvano
-                {kirvanoEvents.some((e: any) => !e.matched) && (
+                {kirvanoEvents.some((e: any) => !e.matched_user_id) && (
                   <span className="ml-1.5 bg-orange-500 text-white text-[10px] font-bold rounded-full px-1.5 py-0.5">!</span>
                 )}
               </TabsTrigger>
@@ -860,7 +860,7 @@ export default function AdminPanel() {
                       <span className="text-xs text-muted-foreground font-normal">
                         — {formatDate(kirvanoEvents[0].created_at)}
                       </span>
-                      {kirvanoEvents[0].matched ? (
+                      {kirvanoEvents[0].matched_user_id ? (
                         <Badge className="bg-green-500/20 text-green-300 border-green-500/30 text-xs"><Link2 className="h-3 w-3 mr-1" />Usuário encontrado</Badge>
                       ) : (
                         <Badge className="bg-orange-500/20 text-orange-300 border-orange-500/30 text-xs"><Link2Off className="h-3 w-3 mr-1" />Sem match</Badge>
@@ -872,12 +872,12 @@ export default function AdminPanel() {
                       <div className="space-y-0.5">
                         <p className="text-xs text-muted-foreground">Evento</p>
                         <p className="text-sm font-mono">{kirvanoEvents[0].event_type || "—"}</p>
-                        <Badge variant="outline" className="text-xs">{kirvanoEvents[0].canonical_event || "unknown"}</Badge>
+                        <Badge variant="outline" className="text-xs">{kirvanoEvents[0].status || "unknown"}</Badge>
                       </div>
                       <div className="space-y-0.5">
                         <p className="text-xs text-muted-foreground">Email / Telefone</p>
-                        <p className="text-sm">{kirvanoEvents[0].email || "—"}</p>
-                        <p className="text-xs font-mono text-muted-foreground">{kirvanoEvents[0].phone || "—"}</p>
+                        <p className="text-sm">{kirvanoEvents[0].customer_email || "—"}</p>
+                        <p className="text-xs font-mono text-muted-foreground">{kirvanoEvents[0].customer_phone || "—"}</p>
                       </div>
                       <div className="space-y-0.5">
                         <p className="text-xs text-muted-foreground">Produto</p>
@@ -932,19 +932,19 @@ export default function AdminPanel() {
                       <TableBody>
                         {kirvanoEvents.map((ev: any) => (
                           <>
-                            <TableRow key={ev.id} className={!ev.matched ? "bg-orange-500/5" : ""}>
+                            <TableRow key={ev.id} className={!ev.matched_user_id ? "bg-orange-500/5" : ""}>
                               <TableCell className="text-xs whitespace-nowrap text-muted-foreground">{formatDate(ev.created_at)}</TableCell>
                               <TableCell>
                                 <div className="space-y-0.5">
                                   <p className="text-xs font-mono">{ev.event_type || "—"}</p>
-                                  <Badge variant="outline" className="text-[10px] h-4">{ev.canonical_event || "unknown"}</Badge>
+                                  <Badge variant="outline" className="text-[10px] h-4">{ev.status || "unknown"}</Badge>
                                 </div>
                               </TableCell>
-                              <TableCell className="text-sm">{ev.email || "—"}</TableCell>
-                              <TableCell className="text-xs font-mono">{ev.phone || "—"}</TableCell>
+                              <TableCell className="text-sm">{ev.customer_email || "—"}</TableCell>
+                              <TableCell className="text-xs font-mono">{ev.customer_phone || "—"}</TableCell>
                               <TableCell className="text-sm max-w-[140px] truncate">{ev.product_name || "—"}</TableCell>
                               <TableCell>
-                                {ev.matched ? (
+                                {ev.matched_user_id ? (
                                   <Badge className="bg-green-500/20 text-green-300 border-green-500/30 text-xs"><Link2 className="h-3 w-3 mr-1" />Match</Badge>
                                 ) : (
                                   <Badge className="bg-orange-500/20 text-orange-300 border-orange-500/30 text-xs"><Link2Off className="h-3 w-3 mr-1" />Sem match</Badge>

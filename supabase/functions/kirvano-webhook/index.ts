@@ -316,20 +316,24 @@ async function logEvent(
   canonicalEvent: CanonicalEvent,
   userId: string | null
 ): Promise<void> {
-  await supabase.from("kirvano_events" as any).insert({
-    event_type: kData.event,
-    canonical_event: canonicalEvent,
-    email: kData.email || null,
-    phone: kData.phone || null,
+  // Colunas reais da tabela kirvano_events:
+  // id, event_id, event_type, customer_email, customer_phone, customer_name,
+  // product_name, subscription_id, transaction_id, amount, access_until,
+  // matched_user_id, status, raw_payload, created_at, processed_at
+  const { error } = await (supabase.from("kirvano_events" as any).insert({
+    event_type: kData.event || "unknown",
+    status: canonicalEvent,
+    customer_email: kData.email || null,
+    customer_phone: kData.phone || null,
+    customer_name: kData.name || null,
     product_name: kData.productName || null,
-    subscription_id: kData.subscriptionId,
-    order_id: kData.orderId,
-    user_id: userId,
-    matched: !!userId,
+    subscription_id: kData.subscriptionId || null,
+    transaction_id: kData.orderId || null,
+    matched_user_id: userId || null,
+    processed_at: new Date().toISOString(),
     raw_payload: kData.rawPayload,
-  }).then(({ error }) => {
-    if (error) console.error("[kirvano] log error:", error.message);
-  });
+  }) as any);
+  if (error) console.error("[kirvano] log error:", error.message, error.details);
 }
 
 // ─────────────────────────────────────────────────────────
