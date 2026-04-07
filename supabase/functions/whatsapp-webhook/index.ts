@@ -641,6 +641,47 @@ async function handleAgendaCreate(
     };
   }
 
+  // ─── STEP: waiting_title ───
+  // Usuário está fornecendo o título do evento
+  if (step === "waiting_title") {
+    const titleProvided = message.trim();
+    if (!titleProvided || titleProvided.length < 2) {
+      return {
+        response: "Preciso de um nome para o evento. Ex: _Reunião com João_, _Dentista_, _Academia_",
+        pendingAction: "agenda_create",
+        pendingContext: { partial, step: "waiting_title" },
+      };
+    }
+    // Injeta o título no partial e prossegue com a criação
+    const recurrenceFromCtxTitle = context._recurrence
+      ? { type: context._recurrence as string, weekday: context._recurrence_weekday as number | undefined }
+      : undefined;
+    const dataWithTitle = { ...partial, title: titleProvided } as unknown as ExtractedEvent;
+    // Se ainda falta horário, pede
+    if (!dataWithTitle.time) {
+      return {
+        response: `Certo! *${titleProvided}* — qual o horário? ⏰\n_Ex: 14h, 14:30, às 15h_`,
+        pendingAction: "agenda_create",
+        pendingContext: {
+          partial: dataWithTitle,
+          step: "waiting_time",
+          _recurrence: recurrenceFromCtxTitle?.type,
+          _recurrence_weekday: recurrenceFromCtxTitle?.weekday,
+        },
+      };
+    }
+    // Verifica conflito antes de criar
+    const conflict = await checkTimeConflict(userId, dataWithTitle.date, dataWithTitle.time, dataWithTitle.end_time);
+    if (conflict) {
+      return {
+        response: `⚠️ *Conflito de horário!*\nVocê já tem *${conflict.title}* às ${conflict.event_time}.\n\nO que prefere?\n1️⃣ Marcar assim mesmo\n2️⃣ Mudar o horário\n3️⃣ Cancelar`,
+        pendingAction: "agenda_create",
+        pendingContext: { partial: dataWithTitle, step: "conflict_resolution" },
+      };
+    }
+    return await createEventAndConfirm(userId, phone, dataWithTitle, recurrenceFromCtxTitle);
+  }
+
   // ─── STEP: conflict_resolution ───
   // Usuário está resolvendo um conflito de horário
   if (step === "conflict_resolution") {
@@ -846,8 +887,12 @@ async function createEventAndConfirm(
         user_id: userId,
         event_id: event.id,
         whatsapp_number: phone,
+        title: extracted.title,
         message: reminderMsg,
         send_at: reminderTime.toISOString(),
+        recurrence: "none",
+        source: "whatsapp",
+        status: "pending",
       });
     }
   }
@@ -2190,6 +2235,20 @@ async function handleEventFollowup(
   // 🔄 Quer adiar/reagendar
   if (/^(adiar|nao|não|n|nope|nao fui|nao consegui|nao rolou|reagendar|remarcar|cancelar)$/.test(m) ||
       /nao (fui|consegui|foi|rolou|aconteceu)/.test(m)) {
+    // Busca data/hora do evento no banco para passar ao edit flow
+    let eventDate = ctx.event_date as string | undefined;
+    let eventTime = ctx.event_time as string | undefined;
+    if (eventId && (!eventDate || !eventTime)) {
+      const { data: ev } = await supabase
+        .from("events")
+        .select("event_date, event_time")
+        .eq("id", eventId)
+        .maybeSingle();
+      if (ev) {
+        eventDate = ev.event_date ?? undefined;
+        eventTime = ev.event_time ?? undefined;
+      }
+    }
     // Mantém evento como pending (não cancela, apenas não confirma)
     return {
       response: `Tudo bem! Para quando vou remarcar *${eventTitle}*? 📅\n\n_Ex: amanhã às 15h, sexta às 10h_`,
@@ -2197,8 +2256,8 @@ async function handleEventFollowup(
       pendingContext: {
         event_id: eventId,
         event_title: eventTitle,
-        event_date: ctx.event_date,
-        event_time: ctx.event_time,
+        event_date: eventDate,
+        event_time: eventTime,
         reminder_minutes: null,
         step: "awaiting_change",
       },
