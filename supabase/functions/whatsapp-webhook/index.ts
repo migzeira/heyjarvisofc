@@ -5,11 +5,13 @@ import { syncGoogleCalendar, syncGoogleSheets, syncNotion } from "../_shared/int
 import {
   extractTransactions,
   extractEvent,
+  parseAgendaQuery,
   assistantChat,
   transcribeAudio,
   extractReceiptFromImage,
   parseReminderIntent,
   type ChatMessage,
+  type ExtractedEvent,
 } from "../_shared/openai.ts";
 import { logError, fromThrown } from "../_shared/logger.ts";
 
@@ -114,7 +116,7 @@ function classifyIntent(msg: string): Intent {
 
   // Criar agenda
   if (
-    /marca(r)?( na| uma| pra)? (agenda|reuniao|meeting|compromisso|consulta|evento)|agendar|marcar reuniao|tenho (reuniao|consulta|compromisso)|colocar na agenda/.test(
+    /marca(r)?( na| uma| pra)? (agenda|reuniao|meeting|compromisso|consulta|evento)|agendar|marcar reuniao|tenho (reuniao|consulta|compromisso)|colocar na agenda|adicionar na agenda|criar evento|novo compromisso|nova reuniao|nova consulta|novo evento|agenda dia \d/.test(
       m
     )
   )
@@ -122,7 +124,7 @@ function classifyIntent(msg: string): Intent {
 
   // Consultar agenda
   if (
-    /o que (tenho|tem) (hoje|amanha|essa semana|semana)|minha agenda|(proximos|pr[oó]ximos) (eventos?|compromissos?|reunioes?)|(agenda de|agenda do) (hoje|amanha)/.test(
+    /o que (tenho|tem) (hoje|amanha|marcado|essa semana|semana|na agenda)|minha agenda|(proximos?|pr[oó]ximos?) (eventos?|compromissos?|reunioes?)|(agenda de|agenda do|agenda da|agenda dessa|agenda desta) (hoje|amanha|semana|mes)|meus compromissos|tem algo marcado|compromissos de (hoje|amanha|semana)|agenda dessa semana|compromissos da semana|eventos? (de|da|do) (hoje|amanha|semana|mes)|o que tenho marcado/.test(
       m
     )
   )
@@ -389,6 +391,36 @@ async function handleFinanceReport(
   return report;
 }
 
+// Mapa de cores por tipo de evento
+const EVENT_TYPE_COLORS: Record<string, string> = {
+  compromisso: "#3b82f6",
+  reuniao: "#8b5cf6",
+  consulta: "#22c55e",
+  evento: "#f97316",
+  tarefa: "#14b8a6",
+};
+
+// Mapa de emojis por tipo de evento
+const EVENT_TYPE_EMOJIS: Record<string, string> = {
+  compromisso: "📌",
+  reuniao: "🤝",
+  consulta: "🏥",
+  evento: "🎉",
+  tarefa: "✏️",
+};
+
+// Detecta se o usuário está recusando lembrete
+function isReminderDecline(msg: string): boolean {
+  const m = msg.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+  return /^(nao|n|nope|nah|sem lembrete|nao precisa|nao quero|dispenso|pode nao|nao obrigado|nao, obrigado|ta bom assim)$/.test(m);
+}
+
+// Detecta se o usuário está aceitando lembrete
+function isReminderAccept(msg: string): boolean {
+  const m = msg.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+  return /^(sim|s|quero|pode ser|claro|por favor|bora|pode|yes|ok|beleza|blz|com certeza|isso)$/.test(m);
+}
+
 async function handleAgendaCreate(
   userId: string,
   phone: string,
@@ -397,29 +429,127 @@ async function handleAgendaCreate(
 ): Promise<{ response: string; pendingAction?: string; pendingContext?: unknown }> {
   const today = new Date().toISOString().split("T")[0];
 
-  // Verifica se há contexto pendente de follow-up
+  // Recupera contexto pendente de follow-up
   const context = (session?.pending_context as Record<string, unknown>) ?? {};
-  const combinedMessage =
-    Object.keys(context).length > 0
-      ? `${JSON.stringify(context)} Resposta do usuário: ${message}`
-      : message;
+  const partial = (context.partial as Record<string, unknown>) ?? {};
+  const step = (context.step as string) ?? null;
 
-  const extracted = await extractEvent(combinedMessage, today);
+  // ─── STEP: waiting_reminder_answer ───
+  // Usuário está respondendo sim/não à oferta de lembrete
+  if (step === "waiting_reminder_answer") {
+    if (isReminderDecline(message)) {
+      // Usuário recusou lembrete — criar evento sem lembrete
+      const finalData = { ...partial, reminder_minutes: null } as unknown as ExtractedEvent;
+      return await createEventAndConfirm(userId, phone, finalData);
+    }
+    if (isReminderAccept(message)) {
+      // Usuário aceitou — perguntar quantos minutos
+      return {
+        response: "Quantos minutos antes você quer ser lembrado? ⏱️\n\n_Ex: 10, 15, 30, 60_",
+        pendingAction: "agenda_create",
+        pendingContext: { partial, step: "waiting_reminder_minutes" },
+      };
+    }
+    // Resposta ambígua — tenta extrair com IA incluindo contexto
+  }
 
-  if (extracted.needs_clarification) {
+  // ─── STEP: waiting_reminder_minutes ───
+  // Usuário está informando quantos minutos antes quer o lembrete
+  if (step === "waiting_reminder_minutes") {
+    // Tenta extrair número da resposta
+    const minutesMatch = message.match(/(\d+)/);
+    if (minutesMatch) {
+      const minutes = parseInt(minutesMatch[1], 10);
+      const finalData = { ...partial, reminder_minutes: minutes } as unknown as ExtractedEvent;
+      return await createEventAndConfirm(userId, phone, finalData);
+    }
+    // "meia hora" → 30
+    if (/meia hora/.test(message.toLowerCase())) {
+      const finalData = { ...partial, reminder_minutes: 30 } as unknown as ExtractedEvent;
+      return await createEventAndConfirm(userId, phone, finalData);
+    }
+    // "uma hora" / "1 hora" → 60
+    if (/uma hora|1\s*hora/.test(message.toLowerCase())) {
+      const finalData = { ...partial, reminder_minutes: 60 } as unknown as ExtractedEvent;
+      return await createEventAndConfirm(userId, phone, finalData);
+    }
+    // Não entendeu — pede de novo
     return {
-      response: extracted.needs_clarification,
+      response: "Não entendi. Quantos minutos antes? Pode ser um número, ex: *15* ou *30* ⏱️",
       pendingAction: "agenda_create",
-      pendingContext: { ...context, partial: extracted },
+      pendingContext: { partial, step: "waiting_reminder_minutes" },
     };
   }
 
-  // Cria o evento
+  // ─── EXTRAÇÃO PRINCIPAL (step null ou waiting_time) ───
+  // Combina contexto parcial com nova mensagem para a IA
+  let combinedMessage: string;
+  if (Object.keys(partial).length > 0) {
+    combinedMessage = `Dados parciais já extraídos: ${JSON.stringify(partial)}\nResposta do usuário: ${message}`;
+  } else {
+    combinedMessage = message;
+  }
+
+  const extracted = await extractEvent(combinedMessage, today);
+
+  // Se a IA pede clarificação de título ou horário → continua o fluxo
+  if (extracted.needs_clarification && extracted.clarification_type === "title") {
+    return {
+      response: extracted.needs_clarification,
+      pendingAction: "agenda_create",
+      pendingContext: { partial: extracted, step: "waiting_title" },
+    };
+  }
+
+  if (extracted.needs_clarification && extracted.clarification_type === "time") {
+    return {
+      response: extracted.needs_clarification,
+      pendingAction: "agenda_create",
+      pendingContext: { partial: extracted, step: "waiting_time" },
+    };
+  }
+
+  // Se a IA oferece lembrete (horário já existe, lembrete não discutido)
+  if (extracted.needs_clarification && extracted.clarification_type === "reminder_offer") {
+    return {
+      response: extracted.needs_clarification,
+      pendingAction: "agenda_create",
+      pendingContext: { partial: extracted, step: "waiting_reminder_answer" },
+    };
+  }
+
+  // Se a IA pede quantidade de minutos para lembrete
+  if (extracted.needs_clarification && extracted.clarification_type === "reminder_minutes") {
+    return {
+      response: extracted.needs_clarification,
+      pendingAction: "agenda_create",
+      pendingContext: { partial: extracted, step: "waiting_reminder_minutes" },
+    };
+  }
+
+  // Tudo preenchido — criar evento
+  return await createEventAndConfirm(userId, phone, extracted);
+}
+
+/** Cria o evento no banco e retorna a confirmação formatada */
+async function createEventAndConfirm(
+  userId: string,
+  phone: string,
+  extracted: ExtractedEvent
+): Promise<{ response: string }> {
+  const color = EVENT_TYPE_COLORS[extracted.event_type] ?? "#3b82f6";
+  const emoji = EVENT_TYPE_EMOJIS[extracted.event_type] ?? "📌";
+
   const eventData: Record<string, unknown> = {
     user_id: userId,
     title: extracted.title,
     event_date: extracted.date,
     event_time: extracted.time,
+    end_time: extracted.end_time ?? null,
+    location: extracted.location ?? null,
+    event_type: extracted.event_type ?? "compromisso",
+    priority: extracted.priority ?? "media",
+    color,
     source: "whatsapp",
     status: "pending",
   };
@@ -465,8 +595,10 @@ async function handleAgendaCreate(
     { weekday: "long", day: "numeric", month: "long" }
   );
 
-  let response = `✅ *Agendado!*\n📅 ${extracted.title}\n🗓 ${dateFormatted}`;
+  let response = `✅ *Agendado!*\n${emoji} ${extracted.title}\n🗓 ${dateFormatted}`;
   if (extracted.time) response += `\n⏰ ${extracted.time}`;
+  if (extracted.end_time) response += ` - ${extracted.end_time}`;
+  if (extracted.location) response += `\n📍 ${extracted.location}`;
   if (extracted.reminder_minutes) {
     response += `\n🔔 Te lembro ${extracted.reminder_minutes} min antes`;
   }
@@ -474,18 +606,32 @@ async function handleAgendaCreate(
   return { response };
 }
 
-async function handleAgendaQuery(userId: string): Promise<string> {
+async function handleAgendaQuery(userId: string, message: string): Promise<string> {
   const today = new Date().toISOString().split("T")[0];
-  const nextWeek = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
-    .toISOString()
-    .split("T")[0];
+
+  // Usa IA para interpretar o período desejado
+  let startDate: string;
+  let endDate: string;
+  let periodDescription: string;
+
+  try {
+    const parsed = await parseAgendaQuery(message, today);
+    startDate = parsed.start_date;
+    endDate = parsed.end_date;
+    periodDescription = parsed.description;
+  } catch {
+    // Fallback: próximos 7 dias
+    startDate = today;
+    endDate = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+    periodDescription = "próximos 7 dias";
+  }
 
   const { data: events, error } = await supabase
     .from("events")
     .select("*")
     .eq("user_id", userId)
-    .gte("event_date", today)
-    .lte("event_date", nextWeek)
+    .gte("event_date", startDate)
+    .lte("event_date", endDate)
     .eq("status", "pending")
     .order("event_date", { ascending: true })
     .order("event_time", { ascending: true });
@@ -493,20 +639,46 @@ async function handleAgendaQuery(userId: string): Promise<string> {
   if (error) throw error;
 
   if (!events || events.length === 0) {
-    return "📅 Nenhum compromisso nos próximos 7 dias!";
+    return `📅 Nenhum compromisso para *${periodDescription}*!`;
   }
 
-  const lines = events.map((e) => {
-    const dateStr = new Date(e.event_date + "T12:00:00").toLocaleDateString(
-      "pt-BR",
-      { weekday: "short", day: "numeric", month: "short" }
-    );
-    const time = e.event_time ? ` às ${e.event_time.slice(0, 5)}` : "";
-    const reminder = e.reminder ? ` 🔔` : "";
-    return `📌 *${e.title}*\n   ${dateStr}${time}${reminder}`;
-  });
+  // Agrupa eventos por data
+  const grouped: Record<string, typeof events> = {};
+  for (const e of events) {
+    const dateKey = e.event_date;
+    if (!grouped[dateKey]) grouped[dateKey] = [];
+    grouped[dateKey].push(e);
+  }
 
-  return `📅 *Sua agenda (próx. 7 dias):*\n\n${lines.join("\n\n")}`;
+  const sections: string[] = [];
+
+  for (const [dateKey, dayEvents] of Object.entries(grouped)) {
+    const dateStr = new Date(dateKey + "T12:00:00").toLocaleDateString("pt-BR", {
+      weekday: "long",
+      day: "numeric",
+      month: "long",
+    });
+
+    // Capitaliza primeira letra do dia da semana
+    const dateHeader = dateStr.charAt(0).toUpperCase() + dateStr.slice(1);
+    const lines: string[] = [`📆 *${dateHeader}*`];
+
+    for (const e of dayEvents) {
+      const typeEmoji = EVENT_TYPE_EMOJIS[e.event_type] ?? "📌";
+      const time = e.event_time ? `${e.event_time.slice(0, 5)}` : "Sem horário";
+      const endTime = e.end_time ? ` - ${e.end_time.slice(0, 5)}` : "";
+      const location = e.location ? `\n   📍 ${e.location}` : "";
+      const reminder = e.reminder ? " 🔔" : "";
+      lines.push(`  ${typeEmoji} *${e.title}*\n   🕐 ${time}${endTime}${reminder}${location}`);
+    }
+
+    sections.push(lines.join("\n"));
+  }
+
+  const totalCount = events.length;
+  const countLabel = totalCount === 1 ? "1 compromisso" : `${totalCount} compromissos`;
+
+  return `📅 *Sua agenda — ${periodDescription}*\n_(${countLabel})_\n\n${sections.join("\n\n")}`;
 }
 
 async function handleNotesSave(
@@ -989,7 +1161,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       pendingAction = result.pendingAction;
       pendingContext = result.pendingContext;
     } else if (intent === "agenda_query" && moduleAgenda) {
-      responseText = await handleAgendaQuery(profile.id);
+      responseText = await handleAgendaQuery(profile.id, text);
     } else if (intent === "notes_save" && moduleNotes) {
       responseText = await handleNotesSave(profile.id, text);
     } else if (intent === "reminder_set") {

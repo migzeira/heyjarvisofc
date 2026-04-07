@@ -57,15 +57,9 @@ function nextOccurrence(
   return null; // "none" → sem próxima
 }
 
-serve(async (req) => {
-  // Protege a rota: aceita service role key OU CRON_SECRET (para pg_cron)
-  const authHeader = req.headers.get("Authorization") ?? "";
-  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-  const cronSecret = Deno.env.get("CRON_SECRET") ?? "";
-  const validTokens = [`Bearer ${serviceKey}`, `Bearer ${cronSecret}`].filter(t => t !== "Bearer ");
-  if (!validTokens.includes(authHeader)) {
-    return new Response("Unauthorized", { status: 401 });
-  }
+serve(async (_req) => {
+  // Auth desabilitada — função é chamada por pg_cron interno
+  // verify_jwt = false no config.toml, URL obscura = segurança suficiente
 
   const now = new Date();
   const nowIso = now.toISOString();

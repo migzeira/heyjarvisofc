@@ -80,25 +80,101 @@ Responda SOMENTE com o JSON, sem explicações.`;
   return parsed.transactions ?? [];
 }
 
-/** Extrai dados de evento/agenda do texto do usuário */
-export async function extractEvent(
-  text: string,
-  today: string
-): Promise<{
+/** Tipo de retorno da extração de evento */
+export interface ExtractedEvent {
   title: string;
   date: string; // YYYY-MM-DD
   time: string | null; // HH:MM
+  end_time: string | null; // HH:MM
+  location: string | null;
+  event_type: "compromisso" | "reuniao" | "consulta" | "evento" | "tarefa";
+  priority: "baixa" | "media" | "alta";
   reminder_minutes: number | null;
   needs_clarification: string | null;
-}> {
-  const system = `Você é um extrator de dados de agenda. Responda APENAS com JSON válido, sem markdown.`;
+  clarification_type: "time" | "title" | "reminder_offer" | "reminder_minutes" | null;
+}
 
-  const prompt = `Extraia informações de evento/agenda do texto. Hoje é ${today}. Retorne JSON.
-Campos: { "title": string, "date": "YYYY-MM-DD", "time": "HH:MM" ou null, "reminder_minutes": número ou null, "needs_clarification": string ou null }
+/** Extrai dados de evento/agenda do texto do usuário (fluxo conversacional multi-step) */
+export async function extractEvent(
+  text: string,
+  today: string
+): Promise<ExtractedEvent> {
+  const system = `Você é um extrator de dados de agenda inteligente. Responda APENAS com JSON válido, sem markdown, sem explicações.`;
 
-Se faltar título, coloque "needs_clarification": "Qual o nome ou motivo desse compromisso?"
-Se faltar horário, coloque "needs_clarification": "A que horas é? Quer que eu te lembre antes?"
-Se tiver lembrete explícito, preencha reminder_minutes (ex: "20 minutos antes" = 20).
+  const prompt = `Extraia informações de evento/agenda do texto. Hoje é ${today} (use como referência para datas relativas como "amanhã", "semana que vem", "dia 15", etc).
+
+Retorne JSON com EXATAMENTE esta estrutura:
+{
+  "title": "string - título do evento",
+  "date": "YYYY-MM-DD",
+  "time": "HH:MM" ou null,
+  "end_time": "HH:MM" ou null,
+  "location": "string" ou null,
+  "event_type": "compromisso" | "reuniao" | "consulta" | "evento" | "tarefa",
+  "priority": "baixa" | "media" | "alta",
+  "reminder_minutes": número ou null,
+  "needs_clarification": "string - pergunta para o usuário" ou null,
+  "clarification_type": "time" | "title" | "reminder_offer" | "reminder_minutes" ou null
+}
+
+REGRAS DE CLASSIFICAÇÃO:
+- event_type: "reuniao" para meetings/reuniões, "consulta" para médico/dentista/profissional, "tarefa" para tarefas/to-dos, "evento" para festas/shows/conferências, "compromisso" para o resto.
+- priority: "alta" para reuniões de trabalho/médico/urgente, "media" para compromissos normais, "baixa" para tarefas/lembretes simples.
+
+REGRAS DE CLARIFICAÇÃO (ordem de prioridade):
+1. Se faltar título → needs_clarification: "Qual o nome ou motivo desse compromisso? 📝", clarification_type: "title"
+2. Se faltar horário (time é null) → needs_clarification: "Qual horário? 🕐", clarification_type: "time"
+3. Se o horário JÁ FOI FORNECIDO e reminder_minutes é null e NÃO houve discussão sobre lembrete → needs_clarification: "Quer que eu te lembre antes desse compromisso? 🔔", clarification_type: "reminder_offer"
+4. Se tiver lembrete explícito no texto (ex: "20 minutos antes"), preencha reminder_minutes e NÃO peça clarificação.
+
+CONTEXTO DE FOLLOW-UP:
+O texto pode conter dados parciais de uma extração anterior (JSON com campo "partial") + a resposta do usuário.
+Quando houver dados parciais:
+- NÃO peça clarificação para campos que já foram preenchidos no partial.
+- Se partial já tem time preenchido, NÃO coloque clarification_type "time".
+- Se o usuário respondeu "não"/"nao"/"não precisa"/"sem lembrete" a uma oferta de lembrete, coloque reminder_minutes: null, needs_clarification: null, clarification_type: null (evento pronto para criar).
+- Se o usuário respondeu "sim"/"quero"/"pode ser" a uma oferta de lembrete, coloque needs_clarification: "Quantos minutos antes você quer ser lembrado? ⏱️", clarification_type: "reminder_minutes".
+- Se o usuário deu um número de minutos (ex: "15", "30 minutos", "meia hora"), coloque reminder_minutes com o valor e needs_clarification: null.
+- Mescle os dados parciais com os novos dados extraídos. Campos já preenchidos no partial devem ser mantidos.
+
+Texto: "${text}"
+
+Responda SOMENTE com o JSON.`;
+
+  const result = await chat(
+    [{ role: "user", content: prompt }],
+    system,
+    true
+  );
+  return JSON.parse(result);
+}
+
+/** Analisa uma consulta de agenda e retorna o intervalo de datas desejado */
+export async function parseAgendaQuery(
+  text: string,
+  today: string
+): Promise<{ start_date: string; end_date: string; description: string }> {
+  const system = `Você é um parser de consultas de agenda. Responda APENAS com JSON válido, sem markdown.`;
+
+  const prompt = `Analise a consulta de agenda e determine o intervalo de datas. Hoje é ${today}.
+
+Retorne JSON:
+{
+  "start_date": "YYYY-MM-DD",
+  "end_date": "YYYY-MM-DD",
+  "description": "string curta descrevendo o período, ex: 'hoje', 'amanhã', 'esta semana', 'dia 15 de abril'"
+}
+
+Exemplos:
+- "o que tenho hoje" → start_date e end_date = hoje
+- "agenda de amanhã" → start_date e end_date = amanhã
+- "compromissos da semana" / "essa semana" → segunda a domingo da semana atual
+- "o que tenho dia 15" → start_date e end_date = dia 15 do mês atual (ou próximo mês se dia 15 já passou)
+- "agenda de abril" → 1 a 30 de abril
+- "próximos 3 dias" → hoje até hoje+2
+- "próximos 10 dias" → hoje até hoje+9
+- "semana que vem" → segunda a domingo da próxima semana
+- Sem especificação clara → próximos 7 dias
 
 Texto: "${text}"
 
