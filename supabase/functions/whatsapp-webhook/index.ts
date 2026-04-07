@@ -773,7 +773,15 @@ async function handleAgendaCreate(
     combinedMessage = message;
   }
 
-  const extracted = await extractEvent(combinedMessage, today);
+  let extracted: Awaited<ReturnType<typeof extractEvent>>;
+  try {
+    extracted = await extractEvent(combinedMessage, today);
+  } catch (err) {
+    console.error("extractEvent failed:", err);
+    return {
+      response: "Não consegui entender o evento. Pode repetir com mais detalhes?\n\nEx: _Reunião amanhã às 15h_ ou _Médico dia 10 às 9h_",
+    };
+  }
 
   // Se a IA pede clarificação de título ou horário → continua o fluxo
   if (extracted.needs_clarification && extracted.clarification_type === "title") {
@@ -1089,6 +1097,7 @@ async function handleAgendaLookup(
         .from("reminders")
         .select("status, send_at")
         .eq("event_id", e.id)
+        .eq("user_id", userId)
         .eq("status", "pending")
         .maybeSingle();
 
@@ -1188,8 +1197,11 @@ async function applyEventUpdate(
           user_id: userId,
           event_id: eventId,
           whatsapp_number: phone,
+          title: originalData.title,
           message: reminderMsg,
           send_at: remindDt.toISOString(),
+          recurrence: "none",
+          source: "whatsapp",
           status: "pending",
         });
       }
@@ -1340,7 +1352,15 @@ async function handleAgendaEdit(
   }
 
   // Extrai o que mudou
-  const edit = await extractAgendaEdit(message, today);
+  let edit: Awaited<ReturnType<typeof extractAgendaEdit>>;
+  try {
+    edit = await extractAgendaEdit(message, today);
+  } catch (err) {
+    console.error("extractAgendaEdit failed:", err);
+    return {
+      response: "Não entendi o que alterar. Pode repetir?\n\nEx: _muda para dia 15 às 10h_ ou _cancela esse evento_",
+    };
+  }
 
   // Cancelamento
   if (edit.cancel) {
