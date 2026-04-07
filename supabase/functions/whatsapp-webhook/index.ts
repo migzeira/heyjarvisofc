@@ -2676,10 +2676,8 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
     }
 
     if (!profile) {
-      await sendText(
-        replyTo,
-        "❌ Conta não encontrada.\n\nPara usar a Minha Maya:\n1. Acesse *minhamaya.com.br* e crie sua conta\n2. Vá em *Meu Perfil* e cadastre seu número\n3. Aguarde a aprovação da sua conta"
-      );
+      // Número não cadastrado em nenhum dashboard → silêncio total (sem resposta)
+      log.push("unknown_number");
       return log;
     }
 
@@ -2710,6 +2708,13 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       .select("*")
       .eq("user_id", profile.id)
       .maybeSingle();
+
+    // 3b. Verifica se o agente está ativo (toggle do dashboard)
+    // is_active === false significa que o usuário pausou manualmente → silêncio total
+    if (config?.is_active === false) {
+      log.push("agent_paused");
+      return log;
+    }
 
     const agentName = config?.agent_name ?? "Maya";
     const tone = config?.tone ?? "profissional";

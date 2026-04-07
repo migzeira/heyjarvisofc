@@ -9,7 +9,7 @@ import { Link } from "react-router-dom";
 import {
   Wallet, CalendarDays, StickyNote, Settings, BarChart3, Link2,
   TrendingDown, BookOpen, Bell, BellRing, Plus, ChevronRight,
-  MessageSquare, Clock, Zap,
+  MessageSquare, Clock, Zap, Smartphone,
 } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { toast } from "sonner";
@@ -302,10 +302,30 @@ export default function DashboardHome() {
             <BookOpen className="h-4 w-4" />
             Como usar a Maya
           </Button>
+
+          {/* WhatsApp number status */}
+          {profile?.phone_number ? (
+            <Card className="bg-card border-border inline-flex items-center gap-2 px-3 py-2.5">
+              <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse shrink-0" />
+              <Smartphone className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+              <span className="text-xs text-muted-foreground font-mono">
+                {profile.phone_number.replace(/(\d{2})(\d{2})(\d{5})(\d{4})/, "+$1 ($2) $3-$4")}
+              </span>
+            </Card>
+          ) : (
+            <Link to="/dashboard/perfil">
+              <Card className="bg-card border-amber-500/30 inline-flex items-center gap-2 px-3 py-2.5 cursor-pointer hover:bg-accent transition-colors">
+                <Smartphone className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+                <span className="text-xs text-amber-400">Vincular WhatsApp</span>
+              </Card>
+            </Link>
+          )}
+
+          {/* Agent active/paused toggle */}
           <Card className="bg-card border-border inline-flex items-center gap-3 px-4 py-2.5">
             <div className={`w-2 h-2 rounded-full ${agentConfig?.is_active ? "bg-green-500 animate-pulse" : "bg-muted-foreground"}`} />
             <span className="text-sm">Agente {agentConfig?.is_active ? "ativo" : "inativo"}</span>
-            <Switch checked={agentConfig?.is_active ?? false} onCheckedChange={toggleAgent} />
+            <Switch checked={agentConfig?.is_active ?? true} onCheckedChange={toggleAgent} />
           </Card>
         </div>
       </div>

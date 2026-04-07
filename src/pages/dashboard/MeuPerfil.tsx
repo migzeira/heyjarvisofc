@@ -82,13 +82,25 @@ export default function MeuPerfil() {
   };
 
   const handleSave = async () => {
+    const cleanPhone = profile.phone_number?.replace(/\D/g, "") || null;
+    // Se tem número e conta ainda está pendente → ativa automaticamente
+    const shouldActivate = !!cleanPhone && profile.account_status === "pending";
     const { error } = await supabase.from("profiles").update({
       display_name: profile.display_name,
-      phone_number: profile.phone_number?.replace(/\D/g, "") || null,
+      phone_number: cleanPhone,
       timezone: profile.timezone,
+      ...(shouldActivate && { account_status: "active" }),
     }).eq("id", user!.id);
     if (error) toast.error("Erro ao salvar");
-    else toast.success("Perfil atualizado! O admin será notificado para aprovar sua conta.");
+    else {
+      if (shouldActivate) {
+        setProfile({ ...profile, phone_number: cleanPhone, account_status: "active" });
+        toast.success("Perfil salvo! A Maya já pode responder no seu WhatsApp. 🎉");
+      } else {
+        setProfile({ ...profile, phone_number: cleanPhone });
+        toast.success("Perfil atualizado!");
+      }
+    }
   };
 
   if (loading) return <Skeleton className="h-64 max-w-lg" />;
@@ -104,14 +116,21 @@ export default function MeuPerfil() {
       {profile.account_status === "pending" && (
         <div className="flex items-start gap-2 p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/20 text-sm text-yellow-200">
           <Info className="h-4 w-4 shrink-0 mt-0.5" />
-          <p>Preencha seu número de WhatsApp abaixo e salve. Após a aprovação do administrador, você receberá o número da IA para começar a conversar.</p>
+          <p>Preencha seu número de WhatsApp abaixo e salve — a Maya será ativada automaticamente para responder no seu número.</p>
         </div>
       )}
 
       {profile.account_status === "active" && profile.phone_number && (
         <div className="flex items-start gap-2 p-3 rounded-lg bg-green-500/10 border border-green-500/20 text-sm text-green-200">
           <CheckCircle className="h-4 w-4 shrink-0 mt-0.5" />
-          <p>Conta ativa! Envie uma mensagem para o WhatsApp da Maya para começar.</p>
+          <p>Maya ativa! Envie uma mensagem para o WhatsApp da Maya e ela te responderá.</p>
+        </div>
+      )}
+
+      {profile.account_status === "active" && !profile.phone_number && (
+        <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-sm text-amber-200">
+          <Info className="h-4 w-4 shrink-0 mt-0.5" />
+          <p>Adicione seu número de WhatsApp abaixo para que a Maya possa te responder.</p>
         </div>
       )}
 
