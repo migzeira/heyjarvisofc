@@ -2679,24 +2679,28 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       .maybeSingle();
 
     // 4b. Verifica respostas rápidas (prioridade máxima)
-    const { data: quickReplies } = await supabase
-      .from("quick_replies")
-      .select("trigger_text, reply_text")
-      .eq("user_id", profile.id);
+    // Só dispara quando NÃO há fluxo multi-step pendente — evitar interromper agenda/nota/lembrete em andamento
+    const hasPendingFlow = !!session?.pending_action;
+    if (!hasPendingFlow) {
+      const { data: quickReplies } = await supabase
+        .from("quick_replies")
+        .select("trigger_text, reply_text")
+        .eq("user_id", profile.id);
 
-    if (quickReplies?.length) {
-      const textLower = text.toLowerCase().trim();
-      const match = quickReplies.find((qr) =>
-        textLower === qr.trigger_text.toLowerCase().trim() ||
-        textLower.startsWith(qr.trigger_text.toLowerCase().trim())
-      );
-      if (match) {
-        const reply = match.reply_text
-          .replace("{{user_name}}", (config?.user_nickname as string) || "")
-          .replace("{{agent_name}}", agentName);
-        await sendText(sendPhone, reply);
-        log.push(`quick_reply: ${match.trigger_text}`);
-        return log;
+      if (quickReplies?.length) {
+        const textLower = text.toLowerCase().trim();
+        const match = quickReplies.find((qr) =>
+          textLower === qr.trigger_text.toLowerCase().trim() ||
+          textLower.startsWith(qr.trigger_text.toLowerCase().trim())
+        );
+        if (match) {
+          const reply = match.reply_text
+            .replace("{{user_name}}", (config?.user_nickname as string) || "")
+            .replace("{{agent_name}}", agentName);
+          await sendText(sendPhone || replyTo, reply);
+          log.push(`quick_reply: ${match.trigger_text}`);
+          return log;
+        }
       }
     }
 

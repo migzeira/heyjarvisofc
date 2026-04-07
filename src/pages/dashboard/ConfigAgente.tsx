@@ -134,7 +134,8 @@ export default function ConfigAgente() {
   };
 
   const deleteQuickReply = async (id: string) => {
-    await supabase.from("quick_replies").delete().eq("id", id);
+    const { error } = await supabase.from("quick_replies").delete().eq("id", id);
+    if (error) { toast.error("Erro ao remover"); return; }
     toast.success("Removida");
     loadData();
   };
