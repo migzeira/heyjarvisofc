@@ -9,7 +9,7 @@ import { Link } from "react-router-dom";
 import {
   Wallet, CalendarDays, StickyNote, Settings, BarChart3, Link2,
   TrendingDown, BookOpen, Bell, BellRing, Plus, ChevronRight,
-  MessageSquare, Clock, Zap, Smartphone,
+  MessageSquare, Clock, Zap, Smartphone, AlertTriangle, XCircle, ExternalLink,
 } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { toast } from "sonner";
@@ -236,8 +236,65 @@ export default function DashboardHome() {
   const whatsappLinked = !!profile?.whatsapp_lid || phoneSet;
   const showOnboarding = !phoneSet || !whatsappLinked || profile?.messages_used === 0;
 
+  // ── Subscription status helpers ───────────────
+  const accountStatus = profile?.account_status;
+  const accessUntil = profile?.access_until ? new Date(profile.access_until) : null;
+  const isSuspended = accountStatus === "suspended";
+  const isCancelling = accountStatus === "active" && accessUntil && accessUntil > new Date();
+  const isExpired = accountStatus === "active" && accessUntil && accessUntil <= new Date();
+  const daysLeft = accessUntil ? Math.max(0, Math.ceil((accessUntil.getTime() - Date.now()) / 86400000)) : null;
+
   return (
     <div className="space-y-6">
+
+      {/* ── Subscription status banner ── */}
+      {isSuspended && (
+        <div className="flex items-center gap-3 p-4 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300">
+          <XCircle className="h-5 w-5 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold">Acesso suspenso</p>
+            <p className="text-xs text-red-400 mt-0.5">Sua conta foi suspensa por estorno ou reembolso. Renove para reativar o assistente.</p>
+          </div>
+          <a href="https://minhamaya.com" target="_blank" rel="noopener noreferrer">
+            <button className="shrink-0 text-xs font-medium bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-200 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors">
+              <ExternalLink className="h-3.5 w-3.5" /> Renovar
+            </button>
+          </a>
+        </div>
+      )}
+
+      {isCancelling && daysLeft !== null && (
+        <div className="flex items-center gap-3 p-4 rounded-xl bg-yellow-500/10 border border-yellow-500/30 text-yellow-300">
+          <AlertTriangle className="h-5 w-5 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold">Assinatura cancelada</p>
+            <p className="text-xs text-yellow-400 mt-0.5">
+              Seu acesso expira {daysLeft === 0 ? "hoje" : `em ${daysLeft} dia${daysLeft > 1 ? "s" : ""}`} —{" "}
+              {accessUntil!.toLocaleDateString("pt-BR")}. Após essa data o assistente será desativado.
+            </p>
+          </div>
+          <a href="https://minhamaya.com" target="_blank" rel="noopener noreferrer">
+            <button className="shrink-0 text-xs font-medium bg-yellow-500/20 hover:bg-yellow-500/30 border border-yellow-500/40 text-yellow-200 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors">
+              <ExternalLink className="h-3.5 w-3.5" /> Renovar
+            </button>
+          </a>
+        </div>
+      )}
+
+      {isExpired && (
+        <div className="flex items-center gap-3 p-4 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300">
+          <XCircle className="h-5 w-5 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold">Assinatura expirada</p>
+            <p className="text-xs text-red-400 mt-0.5">Seu período de acesso chegou ao fim. Renove para voltar a usar a Maya.</p>
+          </div>
+          <a href="https://minhamaya.com" target="_blank" rel="noopener noreferrer">
+            <button className="shrink-0 text-xs font-medium bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-200 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors">
+              <ExternalLink className="h-3.5 w-3.5" /> Renovar
+            </button>
+          </a>
+        </div>
+      )}
 
       {/* ── Onboarding banner (novos usuários) ── */}
       {showOnboarding && (

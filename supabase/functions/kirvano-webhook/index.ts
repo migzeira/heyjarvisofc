@@ -212,10 +212,19 @@ async function handleActivate(
 /** Cancela assinatura: mantém acesso até fim do ciclo */
 async function handleCancel(
   userId: string,
-  accessUntilFromKirvano: string | null
+  accessUntilFromKirvano: string | null,
+  plan: string
 ): Promise<void> {
-  const accessUntil = accessUntilFromKirvano
-    ?? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+  // Se Kirvano enviou a data exata (next_charge_date), usa ela.
+  // Caso contrário calcula com base no tipo de plano: anual = +365d, mensal = +30d
+  let accessUntil: string;
+  if (accessUntilFromKirvano) {
+    accessUntil = accessUntilFromKirvano;
+  } else {
+    const isAnnual = plan.includes("anual") || plan.includes("annual") || plan.includes("annually");
+    const days = isAnnual ? 365 : 30;
+    accessUntil = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
+  }
 
   await supabase.from("profiles").update({
     account_status: "active",
@@ -306,7 +315,7 @@ async function processEvent(kData: KirvanoData): Promise<void> {
       await handleActivate(userId, plan, kData.subscriptionId);
       break;
     case "cancel":
-      await handleCancel(userId, kData.accessUntil);
+      await handleCancel(userId, kData.accessUntil, plan);
       break;
     case "revoke":
       await handleRevoke(userId);

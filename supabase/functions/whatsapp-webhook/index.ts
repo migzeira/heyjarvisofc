@@ -2686,7 +2686,10 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
 
     // 2. Verifica se a conta está ativa
     if (profile.account_status === "suspended") {
-      // Silêncio total para contas suspensas (reembolso / chargeback)
+      await sendText(
+        sendPhone || replyTo,
+        "🚫 *Acesso suspenso*\n\nSua conta na Minha Maya está suspensa devido a um estorno ou reembolso confirmado.\n\nSe acredita que isso é um engano, ou deseja reativar sua assinatura, acesse:\n👉 *minhamaya.com*"
+      );
       log.push("account_suspended");
       return log;
     }
@@ -2694,7 +2697,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
     if (profile.account_status === "pending") {
       await sendText(
         sendPhone || replyTo,
-        "⏳ *Sua conta está aguardando aprovação.*\n\nAssim que o administrador aprovar seu acesso, você receberá uma confirmação aqui e poderá usar a Minha Maya normalmente.\n\nQualquer dúvida, acesse o app."
+        "⏳ *Conta aguardando ativação*\n\nSua conta ainda não foi ativada.\n\nSe você já realizou sua assinatura, acesse o app e salve seu número de WhatsApp para ativar automaticamente.\n\n👉 *minhamaya.com*"
       );
       return log;
     }
@@ -2703,17 +2706,20 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
     if (profile.access_until) {
       const accessUntilDate = new Date(profile.access_until);
       if (!isNaN(accessUntilDate.getTime()) && accessUntilDate < new Date()) {
-        // Período expirou → suspende a conta automaticamente e silencia
+        // Período expirou → suspende a conta automaticamente e avisa
         supabase.from("profiles")
           .update({ account_status: "suspended", access_until: null })
           .eq("id", profile.id)
-          .then(() => {})
-          .catch(() => {});
+          .then(() => {}).catch(() => {});
         supabase.from("agent_configs")
           .update({ is_active: false })
           .eq("user_id", profile.id)
-          .then(() => {})
-          .catch(() => {});
+          .then(() => {}).catch(() => {});
+
+        await sendText(
+          sendPhone || replyTo,
+          "⏰ *Sua assinatura expirou*\n\nSeu período de acesso à Minha Maya chegou ao fim.\n\nRenove sua assinatura para voltar a usar a Maya normalmente:\n👉 *minhamaya.com*"
+        );
         log.push("access_expired");
         return log;
       }
