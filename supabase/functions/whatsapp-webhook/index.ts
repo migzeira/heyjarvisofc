@@ -81,6 +81,91 @@ async function translateIfNeeded(text: string, lang: string): Promise<string> {
 }
 
 // ─────────────────────────────────────────────
+// MODULE GATE — mensagem quando módulo está off
+// ─────────────────────────────────────────────
+
+type ModuleMap = { finance: boolean; agenda: boolean; notes: boolean; chat: boolean };
+
+function getModuleDisabledMsg(
+  intent: Intent,
+  lang: string,
+  modules: ModuleMap
+): string {
+  const INTENT_TO_MODULE: Partial<Record<Intent, keyof ModuleMap>> = {
+    finance_record:  "finance",
+    finance_report:  "finance",
+    agenda_create:   "agenda",
+    agenda_query:    "agenda",
+    agenda_lookup:   "agenda",
+    agenda_edit:     "agenda",
+    agenda_delete:   "agenda",
+    event_followup:  "agenda",
+    notes_save:      "notes",
+    reminder_set:    "notes",
+    reminder_snooze: "notes",
+    ai_chat:         "chat",
+  };
+
+  const module = INTENT_TO_MODULE[intent] ?? "chat";
+
+  // Monta lista dos módulos ativos para mostrar no "chat desativado"
+  const activeLabels = {
+    "pt-BR": [
+      modules.finance && "💰 Financeiro",
+      modules.agenda  && "📅 Agenda",
+      modules.notes   && "📝 Anotações e Lembretes",
+    ],
+    "en": [
+      modules.finance && "💰 Finances",
+      modules.agenda  && "📅 Agenda",
+      modules.notes   && "📝 Notes & Reminders",
+    ],
+    "es": [
+      modules.finance && "💰 Finanzas",
+      modules.agenda  && "📅 Agenda",
+      modules.notes   && "📝 Notas y Recordatorios",
+    ],
+  };
+  const lk = (["pt-BR","en","es"].includes(lang) ? lang : "pt-BR") as "pt-BR"|"en"|"es";
+  const activeList = (activeLabels[lk].filter(Boolean) as string[]).join(", ");
+
+  const path = {
+    "pt-BR": "Painel → *Config. do Agente* → *Módulos ativos*",
+    "en":    "Dashboard → *Agent Config* → *Active Modules*",
+    "es":    "Panel → *Config. del Agente* → *Módulos activos*",
+  }[lk];
+
+  const noneLabel = {
+    "pt-BR": "nenhum módulo ativo",
+    "en":    "no modules are currently active",
+    "es":    "no hay módulos activos en este momento",
+  }[lk];
+
+  const MSGS: Record<"pt-BR"|"en"|"es", Record<keyof ModuleMap, string>> = {
+    "pt-BR": {
+      finance: `💰 O módulo *Financeiro* está desativado.\nNão consigo registrar gastos ou receitas agora.\n\n➡️ Para ativar acesse: ${path} e ligue o *Financeiro*.`,
+      agenda:  `📅 O módulo *Agenda* está desativado.\nNão consigo gerenciar compromissos ou lembretes de eventos agora.\n\n➡️ Para ativar acesse: ${path} e ligue a *Agenda*.`,
+      notes:   `📝 O módulo *Anotações e Lembretes* está desativado.\nNão consigo salvar notas nem criar lembretes agora.\n\n➡️ Para ativar acesse: ${path} e ligue as *Anotações*.`,
+      chat:    `💬 A *Conversa livre* está desativada.\nPosso te ajudar com: ${activeList || noneLabel}.\n\n➡️ Para ativar acesse: ${path} e ligue a *Conversa livre*.`,
+    },
+    "en": {
+      finance: `💰 The *Finance* module is disabled.\nI can't record expenses or income right now.\n\n➡️ To enable it, go to: ${path} and turn on *Finance*.`,
+      agenda:  `📅 The *Agenda* module is disabled.\nI can't manage your calendar or event reminders right now.\n\n➡️ To enable it, go to: ${path} and turn on *Agenda*.`,
+      notes:   `📝 The *Notes & Reminders* module is disabled.\nI can't save notes or create reminders right now.\n\n➡️ To enable it, go to: ${path} and turn on *Notes*.`,
+      chat:    `💬 *Free Conversation* is disabled.\nI can help you with: ${activeList || noneLabel}.\n\n➡️ To enable it, go to: ${path} and turn on *Free Conversation*.`,
+    },
+    "es": {
+      finance: `💰 El módulo *Financiero* está desactivado.\nNo puedo registrar gastos ni ingresos ahora.\n\n➡️ Para activarlo ve a: ${path} y activa el *Financiero*.`,
+      agenda:  `📅 El módulo *Agenda* está desactivado.\nNo puedo gestionar tu calendario ni recordatorios de eventos ahora.\n\n➡️ Para activarlo ve a: ${path} y activa la *Agenda*.`,
+      notes:   `📝 El módulo *Notas y Recordatorios* está desactivado.\nNo puedo guardar notas ni crear recordatorios ahora.\n\n➡️ Para activarlo ve a: ${path} y activa las *Notas*.`,
+      chat:    `💬 La *Conversación libre* está desactivada.\nPuedo ayudarte con: ${activeList || noneLabel}.\n\n➡️ Para activarla ve a: ${path} y activa la *Conversación libre*.`,
+    },
+  };
+
+  return MSGS[lk][module];
+}
+
+// ─────────────────────────────────────────────
 // RATE LIMITER — max 20 msgs/min, 200 msgs/hour
 // ─────────────────────────────────────────────
 const RATE_LIMIT_PER_MINUTE = 20;
@@ -2621,35 +2706,61 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
     const moduleNotes = config?.module_notes !== false;
     const moduleChat = config?.module_chat !== false;
 
+    const modules: ModuleMap = { finance: moduleFinance, agenda: moduleAgenda, notes: moduleNotes, chat: moduleChat };
+
+    // Mapa intent → módulo necessário
+    const INTENT_REQUIRES: Partial<Record<Intent, keyof ModuleMap>> = {
+      finance_record:  "finance",
+      finance_report:  "finance",
+      agenda_create:   "agenda",
+      agenda_query:    "agenda",
+      agenda_lookup:   "agenda",
+      agenda_edit:     "agenda",
+      agenda_delete:   "agenda",
+      event_followup:  "agenda",
+      notes_save:      "notes",
+      reminder_set:    "notes",
+      reminder_snooze: "notes",
+      ai_chat:         "chat",
+    };
+
+    const requiredModule = INTENT_REQUIRES[intent];
+    const moduleActive = !requiredModule || modules[requiredModule];
+
     // 6. Executa handler
     let responseText: string;
     let pendingAction: string | undefined;
     let pendingContext: unknown;
 
-    if (intent === "finance_record" && moduleFinance) {
+    if (!moduleActive) {
+      // ── Módulo desativado: informa o usuário e limpa fluxo pendente ──
+      responseText = getModuleDisabledMsg(intent, language, modules);
+      pendingAction = undefined;   // evita usuário preso em fluxo de módulo desativado
+      pendingContext = undefined;
+    } else if (intent === "finance_record") {
       responseText = await handleFinanceRecord(profile.id, replyTo, text, config);
-    } else if (intent === "finance_report" && moduleFinance) {
+    } else if (intent === "finance_report") {
       responseText = await handleFinanceReport(profile.id, text);
-    } else if (intent === "agenda_create" && moduleAgenda) {
+    } else if (intent === "agenda_create") {
       const result = await handleAgendaCreate(profile.id, sendPhone || replyTo, text, session, language);
       responseText = result.response;
       pendingAction = result.pendingAction;
       pendingContext = result.pendingContext;
-    } else if (intent === "agenda_query" && moduleAgenda) {
+    } else if (intent === "agenda_query") {
       responseText = await handleAgendaQuery(profile.id, text);
-    } else if (intent === "agenda_lookup" && moduleAgenda) {
+    } else if (intent === "agenda_lookup") {
       const result = await handleAgendaLookup(profile.id, text);
       responseText = result.response;
       pendingAction = result.pendingAction;
       pendingContext = result.pendingContext;
-    } else if (intent === "agenda_edit" && moduleAgenda) {
+    } else if (intent === "agenda_edit") {
       const result = await handleAgendaEdit(profile.id, sendPhone || replyTo, text, session);
       responseText = result.response;
       pendingAction = result.pendingAction;
       pendingContext = result.pendingContext;
-    } else if (intent === "agenda_delete" && moduleAgenda) {
+    } else if (intent === "agenda_delete") {
       responseText = await handleAgendaDelete(profile.id, text);
-    } else if (intent === "notes_save" && moduleNotes) {
+    } else if (intent === "notes_save") {
       const notesResult = await handleNotesSave(profile.id, sendPhone || replyTo, text, session);
       responseText = notesResult.response;
       pendingAction = notesResult.pendingAction;
@@ -2666,12 +2777,18 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       responseText = followupResult.response;
       pendingAction = followupResult.pendingAction;
       pendingContext = followupResult.pendingContext;
-    } else if (moduleChat) {
-      // Chat geral com IA
-      const history = await getRecentHistory(profile.id);
-      responseText = await assistantChat(text, agentName, tone, language, userNickname, customInstructions, history);
     } else {
-      responseText = `Desculpe, não entendi. Posso ajudar com ${[moduleFinance && "finanças", moduleAgenda && "agenda", moduleNotes && "anotações"].filter(Boolean).join(", ")}.`;
+      // Chat geral com IA (moduleChat já verificado acima via moduleActive)
+      // Informa à IA quais módulos estão ativos/inativos para consistência
+      const moduleContext = [
+        `Módulos ativos: ${[moduleFinance && "Financeiro", moduleAgenda && "Agenda", moduleNotes && "Anotações/Lembretes", "Conversa livre"].filter(Boolean).join(", ")}.`,
+        !moduleFinance ? "O módulo Financeiro está DESATIVADO — se o usuário pedir registro de gastos, diga que o módulo está desativado e peça para ativar no painel." : "",
+        !moduleAgenda  ? "O módulo Agenda está DESATIVADO — se o usuário pedir agenda ou compromissos, diga que o módulo está desativado e peça para ativar no painel." : "",
+        !moduleNotes   ? "O módulo Anotações/Lembretes está DESATIVADO — se o usuário pedir anotações ou lembretes, diga que o módulo está desativado e peça para ativar no painel." : "",
+      ].filter(Boolean).join(" ");
+      const enrichedInstructions = [customInstructions, moduleContext].filter(Boolean).join("\n\n");
+      const history = await getRecentHistory(profile.id);
+      responseText = await assistantChat(text, agentName, tone, language, userNickname, enrichedInstructions, history);
     }
 
     // 7. Traduz resposta se necessário e envia

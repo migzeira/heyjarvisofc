@@ -176,11 +176,11 @@ export default function ConfigAgente() {
         <CardHeader><CardTitle className="text-base">Módulos ativos</CardTitle></CardHeader>
         <CardContent className="space-y-4">
           {[
-            { key: "module_finance", label: "💰 Financeiro", desc: "Registrar gastos/receitas por mensagem" },
-            { key: "module_agenda", label: "📅 Agenda", desc: "Criar/consultar compromissos" },
-            { key: "module_notes", label: "📝 Anotações", desc: "Salvar notas e lembretes" },
-            { key: "module_chat", label: "💬 Conversa livre", desc: "Perguntas gerais respondidas por IA" },
-            { key: "daily_briefing_enabled", label: "🌅 Resumo diário", desc: "Receber resumo da agenda todo dia às 8h no WhatsApp" },
+            { key: "module_finance", label: "💰 Financeiro", desc: "Registrar gastos e receitas pelo WhatsApp — se desativado, a Maya recusa qualquer pedido financeiro" },
+            { key: "module_agenda", label: "📅 Agenda", desc: "Criar, consultar e editar compromissos — se desativado, a Maya recusa pedidos de agenda e followups de eventos" },
+            { key: "module_notes", label: "📝 Anotações e Lembretes", desc: "Salvar notas e criar lembretes WhatsApp — se desativado, a Maya recusa anotações e lembretes" },
+            { key: "module_chat", label: "💬 Conversa livre", desc: "Respostas de IA para perguntas gerais — se desativado, a Maya só responde com os módulos ativos" },
+            { key: "daily_briefing_enabled", label: "🌅 Resumo diário", desc: "Mensagem automática às 8h com compromissos e lembretes do dia — desative para não receber" },
           ].map(m => (
             <div key={m.key} className="flex items-center justify-between">
               <div>
