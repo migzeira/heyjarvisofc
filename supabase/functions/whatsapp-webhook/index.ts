@@ -91,6 +91,7 @@ type Intent =
   | "agenda_query"
   | "agenda_lookup"
   | "agenda_edit"
+  | "agenda_delete"
   | "notes_save"
   | "reminder_set"
   | "ai_chat";
@@ -119,7 +120,7 @@ function classifyIntent(msg: string): Intent {
 
   // Criar agenda
   if (
-    /marca(r)?( na| uma| pra)? (agenda|reuniao|meeting|compromisso|consulta|evento)|agendar|marcar reuniao|tenho (reuniao|consulta|compromisso)|colocar na agenda|adicionar na agenda|criar evento|novo compromisso|nova reuniao|nova consulta|novo evento|agenda dia \d/.test(
+    /marca(r)?( na| uma| pra)? (agenda|reuniao|meeting|compromisso|consulta|evento)|agendar|marcar reuniao|tenho (reuniao|consulta|compromisso|medico|dentista|medica)|colocar na agenda|adicionar na agenda|criar evento|novo compromisso|nova reuniao|nova consulta|novo evento|agenda dia \d|vou ao (medico|dentista|hospital|especialista)|vou a (clinica|consulta)|preciso ir ao (medico|dentista|hospital)|marcar com o (medico|dentista|doutor|dra|dr)/.test(
       m
     )
   )
@@ -152,6 +153,14 @@ function classifyIntent(msg: string): Intent {
   // Buscar evento específico
   if (/voce lembra (do|da|de) (meu|minha)|lembra (do|da|de) (meu|minha)|tem (meu|minha) .{2,30} marcad|qual (e|é) (meu|minha)|quando (e|é) (meu|minha)|tem algo (marcado|agendado) (dia|no dia|para)/.test(m))
     return "agenda_lookup";
+
+  // Cancelar/excluir evento direto (sem edição)
+  if (
+    /^(cancela|exclui|apaga|deleta|remove|desmarca)\s+(meu|minha|o|a)?\s*.{2,40}$/.test(m) ||
+    /nao vou mais (ao|a|para o|para a|ao |a )\s*.{2,30}/.test(m) ||
+    /(cancela|exclui|apaga|deleta|desmarca) (o evento|a reuniao|o compromisso|a consulta|o|a)\s+.{2,30}/.test(m)
+  )
+    return "agenda_delete";
 
   // Editar/remarcar evento
   if (/(mudei|muda|mude|alterei|altera|altere|remarca|remarcar|atualiza|cancela|cancelar|excluir|deletar|mover) .{0,20}(dia|hora|horario|data|evento|compromisso|reuniao|consulta)|mudei de (data|dia|horario|hora)|nao e mais (dia|hora)|e (dia|hora) \d|muda (o|a) (dia|hora|horario|data)/.test(m))
@@ -670,22 +679,39 @@ async function handleAgendaLookup(
 ): Promise<{ response: string; pendingAction?: string; pendingContext?: unknown }> {
   const today = new Date().toISOString().split("T")[0];
 
-  // Extrai palavra-chave da mensagem removendo palavras comuns
-  const keyword = message
+  // Extrai palavra-chave usando padrões contextuais (meu X, do X, sobre X, etc.)
+  const msgNorm = message
     .toLowerCase()
-    .replace(/voce lembra|lembra|do|da|de|meu|minha|tem|qual|e|quando|marcado|agendado|dia|no|para/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .split(" ")
-    .filter((w) => w.length > 2)[0] ?? "";
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
 
-  // Tenta extrair um intervalo de datas da mensagem
+  let keyword = "";
+
+  // Tenta padrão contextual primeiro: "meu/minha/do/da/o/a/sobre X"
+  const contextMatch = msgNorm.match(
+    /(meu|minha|do|da|de|o|a|sobre)\s+([a-z\s]{2,30}?)(?:\s+dia|\s+no|\s+na|\s*\?|$)/i
+  );
+  if (contextMatch) {
+    keyword = contextMatch[2].trim();
+  }
+
+  // Fallback: remove stopwords e usa o primeiro token longo restante
+  if (!keyword) {
+    keyword = msgNorm
+      .replace(/voce lembra|lembra|do|da|de|meu|minha|tem|qual|e|quando|marcado|agendado|dia|no|para|sobre|esta|esse|essa/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .split(" ")
+      .filter((w) => w.length > 2)[0] ?? "";
+  }
+
+  // Tenta extrair um intervalo de datas da mensagem (ignora fallback de 7 dias genérico)
   let startDate: string | null = null;
   let endDate: string | null = null;
   try {
     const parsed = await parseAgendaQuery(message, today);
-    // Só usa o intervalo se for diferente do fallback padrão de 7 dias (heurística: start === hoje)
-    if (parsed.start_date && parsed.end_date) {
+    // Só usa o intervalo se parecer uma data específica (start diferente de hoje)
+    if (parsed.start_date && parsed.end_date && parsed.start_date !== today) {
       startDate = parsed.start_date;
       endDate = parsed.end_date;
     }
@@ -693,12 +719,12 @@ async function handleAgendaLookup(
     // ignora — fará busca só por keyword
   }
 
-  // Monta query combinando keyword + datas
+  // Monta query combinando keyword + datas; exclui apenas cancelados
   let query = supabase
     .from("events")
     .select("*")
     .eq("user_id", userId)
-    .eq("status", "pending")
+    .neq("status", "cancelled")
     .order("event_date", { ascending: true })
     .limit(3);
 
@@ -730,27 +756,48 @@ async function handleAgendaLookup(
     });
     const dateFormatted = dateStr.charAt(0).toUpperCase() + dateStr.slice(1);
     const typeEmoji = EVENT_TYPE_EMOJIS[e.event_type] ?? "📌";
+    const statusLabel = e.status === "done" ? " ✅ *Concluído*" : "";
 
-    let response = `${typeEmoji} *${e.title}*\n🗓 ${dateFormatted}`;
+    let response = `${typeEmoji} *${e.title}*${statusLabel}\n🗓 ${dateFormatted}`;
     if (e.event_time) response += `\n⏰ ${e.event_time.slice(0, 5)}`;
     if (e.end_time) response += ` - ${e.end_time.slice(0, 5)}`;
     if (e.location) response += `\n📍 ${e.location}`;
+
+    // Verifica se há lembrete real pendente na tabela reminders
     if (e.reminder && e.reminder_minutes_before != null) {
-      response += `\n🔔 Lembrete: ${e.reminder_minutes_before === 0 ? "na hora" : `${e.reminder_minutes_before} min antes`}`;
+      const reminderLabel = e.reminder_minutes_before === 0
+        ? "na hora do evento"
+        : `${e.reminder_minutes_before} min antes`;
+
+      const { data: activeReminder } = await supabase
+        .from("reminders")
+        .select("status, send_at")
+        .eq("event_id", e.id)
+        .eq("status", "pending")
+        .maybeSingle();
+
+      if (activeReminder) {
+        response += `\n🔔 Lembrete: ${reminderLabel} _(ativo)_`;
+      } else {
+        response += `\n🔔 Lembrete: ${reminderLabel} _(já disparado ou removido)_`;
+      }
     }
-    response += `\n\nQuer fazer alguma alteração? Pode me dizer a nova data, horário, ou "cancela" se quiser excluir.`;
+
+    if (e.status !== "done") {
+      response += `\n\nQuer fazer alguma alteração? Pode me dizer a nova data, horário, ou "cancela" se quiser excluir.`;
+    }
 
     return {
       response,
-      pendingAction: "agenda_edit",
-      pendingContext: {
+      pendingAction: e.status !== "done" ? "agenda_edit" : undefined,
+      pendingContext: e.status !== "done" ? {
         event_id: e.id,
         event_title: e.title,
         event_date: e.event_date,
         event_time: e.event_time ?? null,
         reminder_minutes: e.reminder_minutes_before ?? null,
         step: "awaiting_change",
-      },
+      } : undefined,
     };
   }
 
@@ -761,7 +808,8 @@ async function handleAgendaLookup(
       month: "short",
     });
     const time = e.event_time ? ` às ${e.event_time.slice(0, 5)}` : "";
-    return `${i + 1}. *${e.title}* — ${dateStr}${time}`;
+    const doneTag = e.status === "done" ? " ✅" : "";
+    return `${i + 1}. *${e.title}*${doneTag} — ${dateStr}${time}`;
   });
 
   return {
@@ -1080,6 +1128,70 @@ async function finalizeEdit(
   return { response };
 }
 
+// ─────────────────────────────────────────────
+// AGENDA DELETE — cancela/exclui evento direto
+// ─────────────────────────────────────────────
+
+async function handleAgendaDelete(
+  userId: string,
+  message: string
+): Promise<string> {
+  // Extrai palavra-chave do pedido de exclusão
+  const msgNorm = message
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  // Remove verbos de exclusão e artigos para isolar o nome do evento
+  const keyword = msgNorm
+    .replace(/cancela|exclui|apaga|deleta|remove|desmarca|nao vou mais|vou mais|o evento|a reuniao|o compromisso|a consulta|meu|minha|o\b|a\b|ao\b|para o|para a/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")
+    .filter((w) => w.length > 2)
+    .slice(0, 3)
+    .join(" ");
+
+  if (!keyword) {
+    return "Qual compromisso você quer cancelar? Me diga o nome.";
+  }
+
+  // Busca o evento por keyword (somente pending — não faz sentido cancelar done)
+  const { data: found, error } = await supabase
+    .from("events")
+    .select("id, title")
+    .eq("user_id", userId)
+    .eq("status", "pending")
+    .ilike("title", `%${keyword}%`)
+    .order("event_date", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
+
+  if (!found) {
+    return `Não encontrei nenhum compromisso pendente com "${keyword}". Qual você quer cancelar?`;
+  }
+
+  // Cancela o evento
+  const { error: updateErr } = await supabase
+    .from("events")
+    .update({ status: "cancelled" })
+    .eq("id", found.id)
+    .eq("user_id", userId);
+
+  if (updateErr) throw updateErr;
+
+  // Cancela lembretes pendentes associados
+  await supabase
+    .from("reminders")
+    .update({ status: "cancelled" })
+    .eq("event_id", found.id)
+    .eq("status", "pending");
+
+  return `✅ *${found.title}* cancelado e removido da sua agenda.`;
+}
+
 async function handleAgendaQuery(userId: string, message: string): Promise<string> {
   const today = new Date().toISOString().split("T")[0];
 
@@ -1106,7 +1218,7 @@ async function handleAgendaQuery(userId: string, message: string): Promise<strin
     .eq("user_id", userId)
     .gte("event_date", startDate)
     .lte("event_date", endDate)
-    .eq("status", "pending")
+    .neq("status", "cancelled")
     .order("event_date", { ascending: true })
     .order("event_time", { ascending: true });
 
@@ -1143,16 +1255,19 @@ async function handleAgendaQuery(userId: string, message: string): Promise<strin
       const endTime = e.end_time ? ` - ${e.end_time.slice(0, 5)}` : "";
       const location = e.location ? `\n   📍 ${e.location}` : "";
       const reminder = e.reminder ? " 🔔" : "";
-      lines.push(`  ${typeEmoji} *${e.title}*\n   🕐 ${time}${endTime}${reminder}${location}`);
+      const statusLabel = e.status === "done" ? " ✅" : "";
+      lines.push(`  ${typeEmoji} *${e.title}*${statusLabel}\n   🕐 ${time}${endTime}${reminder}${location}`);
     }
 
     sections.push(lines.join("\n"));
   }
 
+  const doneCount = events.filter((e) => e.status === "done").length;
   const totalCount = events.length;
   const countLabel = totalCount === 1 ? "1 compromisso" : `${totalCount} compromissos`;
+  const doneNote = doneCount > 0 ? ` _(${doneCount} concluído${doneCount > 1 ? "s" : ""} ✅)_` : "";
 
-  return `📅 *Sua agenda — ${periodDescription}*\n_(${countLabel})_\n\n${sections.join("\n\n")}`;
+  return `📅 *Sua agenda — ${periodDescription}*\n_(${countLabel})_${doneNote}\n\n${sections.join("\n\n")}`;
 }
 
 async function handleNotesSave(
@@ -1715,6 +1830,8 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       responseText = result.response;
       pendingAction = result.pendingAction;
       pendingContext = result.pendingContext;
+    } else if (intent === "agenda_delete" && moduleAgenda) {
+      responseText = await handleAgendaDelete(profile.id, text);
     } else if (intent === "notes_save" && moduleNotes) {
       responseText = await handleNotesSave(profile.id, text);
     } else if (intent === "reminder_set") {

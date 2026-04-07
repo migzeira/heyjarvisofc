@@ -13,9 +13,8 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { Bell, Plus, Trash2, Clock, RefreshCw, CheckCircle2, XCircle } from "lucide-react";
-import { format, isPast } from "date-fns";
-import { ptBR } from "date-fns/locale";
+import { Bell, Plus, Trash2, Clock, RefreshCw, CheckCircle2, XCircle, Pencil } from "lucide-react";
+import { isPast } from "date-fns";
 
 interface Reminder {
   id: string;
@@ -37,15 +36,17 @@ const RECURRENCE_LABELS: Record<string, string> = {
   day_of_month: "Dia do mês",
 };
 
-const RECURRENCE_COLORS: Record<string, string> = {
-  none: "secondary",
-  daily: "default",
-  weekly: "default",
-  monthly: "default",
-  day_of_month: "default",
-};
-
 const WEEKDAYS = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
+
+function formatBrasilia(isoString: string): string {
+  return new Date(isoString).toLocaleString("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    day: "2-digit",
+    month: "long",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
 
 function recurrenceLabel(r: Reminder) {
   if (r.recurrence === "none" || !r.recurrence) return null;
@@ -80,6 +81,13 @@ export default function Lembretes() {
   const [recurrenceValue, setRecurrenceValue] = useState<string>("");
   const [saving, setSaving] = useState(false);
 
+  // Edit dialog state
+  const [editOpen, setEditOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editSendAt, setEditSendAt] = useState("");
+  const [editMessage, setEditMessage] = useState("");
+  const [editSaving, setEditSaving] = useState(false);
+
   useEffect(() => { if (user) load(); }, [user]);
 
   const load = async () => {
@@ -90,15 +98,12 @@ export default function Lembretes() {
       .neq("status", "cancelled")
       .order("created_at", { ascending: false });
 
-    // Pendentes primeiro (mais próximos de disparar no topo), depois enviados/falhados
     const sorted = ((data as any[]) ?? []).sort((a, b) => {
       const aIsPending = a.status === "pending";
       const bIsPending = b.status === "pending";
       if (aIsPending && !bIsPending) return -1;
       if (!aIsPending && bIsPending) return 1;
-      // Dentro dos pendentes: menor send_at primeiro (próximo a disparar no topo)
       if (aIsPending && bIsPending) return new Date(a.send_at).getTime() - new Date(b.send_at).getTime();
-      // Dentro dos enviados: mais recente primeiro
       return new Date(b.send_at).getTime() - new Date(a.send_at).getTime();
     });
 
@@ -114,7 +119,6 @@ export default function Lembretes() {
 
     setSaving(true);
 
-    // Busca o número de WhatsApp do perfil
     const { data: profile } = await supabase
       .from("profiles")
       .select("phone_number")
@@ -159,6 +163,50 @@ export default function Lembretes() {
     else { toast.success("Lembrete excluído"); load(); }
   };
 
+  const handleRetry = async (id: string) => {
+    const retryAt = new Date(Date.now() + 2 * 60 * 1000).toISOString();
+    const { error } = await supabase.from("reminders")
+      .update({ status: "pending", send_at: retryAt })
+      .eq("id", id);
+    if (error) toast.error("Erro ao reagendar");
+    else { toast.success("Reagendado para daqui 2 minutos!"); load(); }
+  };
+
+  const openEdit = (r: Reminder) => {
+    const d = new Date(r.send_at);
+    // Format as datetime-local value (YYYY-MM-DDTHH:mm) in Brasilia time
+    const brasiliaStr = d.toLocaleString("sv-SE", { timeZone: "America/Sao_Paulo" }).slice(0, 16);
+    setEditSendAt(brasiliaStr);
+    setEditMessage(r.message);
+    setEditingId(r.id);
+    setEditOpen(true);
+  };
+
+  const handleEdit = async () => {
+    if (!editingId) return;
+    setEditSaving(true);
+    const { error } = await supabase.from("reminders")
+      .update({
+        message: editMessage,
+        send_at: new Date(editSendAt).toISOString(),
+        status: "pending",
+      })
+      .eq("id", editingId);
+    if (error) toast.error("Erro ao atualizar");
+    else { toast.success("Lembrete atualizado!"); setEditOpen(false); load(); }
+    setEditSaving(false);
+  };
+
+  const handleClearSent = async () => {
+    if (!window.confirm("Excluir todos os lembretes enviados?")) return;
+    await supabase.from("reminders")
+      .delete()
+      .eq("user_id", user!.id)
+      .eq("status", "sent");
+    toast.success("Lembretes enviados removidos!");
+    load();
+  };
+
   const filtered = reminders.filter(r => {
     if (filter === "pending") return r.status === "pending";
     if (filter === "sent") return r.status === "sent";
@@ -168,8 +216,36 @@ export default function Lembretes() {
 
   const pendingCount = reminders.filter(r => r.status === "pending").length;
   const recurringCount = reminders.filter(r => r.recurrence && r.recurrence !== "none" && r.status === "pending").length;
+  const sentCount = reminders.filter(r => r.status === "sent").length;
+
+  const emptyStateMessage = () => {
+    switch (filter) {
+      case "pending":
+        return {
+          title: "Nenhum lembrete pendente.",
+          subtitle: 'Crie um acima ou mande mensagem no WhatsApp: "me lembra de X às 10h"',
+        };
+      case "sent":
+        return {
+          title: "Nenhum lembrete enviado ainda.",
+          subtitle: "Os lembretes enviados aparecerão aqui após o disparo pela Maya.",
+        };
+      case "recurring":
+        return {
+          title: "Nenhum lembrete recorrente.",
+          subtitle: 'Crie lembretes com repetição diária, semanal ou mensal. Ex: "me lembra todo dia 10 de pagar aluguel"',
+        };
+      default:
+        return {
+          title: "Nenhum lembrete ainda.",
+          subtitle: 'Crie um acima ou mande mensagem no WhatsApp: "me lembra de X às 10h"',
+        };
+    }
+  };
 
   if (loading) return <div className="space-y-3">{[1,2,3].map(i => <Skeleton key={i} className="h-20" />)}</div>;
+
+  const empty = emptyStateMessage();
 
   return (
     <div className="space-y-6">
@@ -192,7 +268,7 @@ export default function Lembretes() {
             </DialogHeader>
             <div className="space-y-4 pt-2">
               <p className="text-xs text-muted-foreground bg-muted/30 rounded-md p-3 border border-border">
-                💡 <strong>Dica:</strong> Você também pode criar lembretes diretamente no WhatsApp! Basta dizer:<br />
+                Dica: Você também pode criar lembretes diretamente no WhatsApp. Basta dizer:<br />
                 <em>"me lembra de X amanhã às 10h"</em> ou <em>"me lembra todo dia 10 de pagar aluguel"</em>
               </p>
 
@@ -205,12 +281,12 @@ export default function Lembretes() {
                 <Textarea
                   value={message}
                   onChange={e => setMessage(e.target.value)}
-                  placeholder="⏰ Lembrete: Pagar aluguel!"
+                  placeholder="Lembrete: Pagar aluguel!"
                   rows={2}
                 />
               </div>
               <div className="space-y-2">
-                <Label>Data e hora</Label>
+                <Label>Data e hora (horário de Brasília)</Label>
                 <Input type="datetime-local" value={sendAt} onChange={e => setSendAt(e.target.value)} />
               </div>
               <div className="space-y-2">
@@ -253,6 +329,44 @@ export default function Lembretes() {
         </Dialog>
       </div>
 
+      {/* Edit dialog */}
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent className="bg-card border-border max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Pencil className="h-4 w-4" /> Editar lembrete</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 pt-2">
+            <div className="space-y-2">
+              <Label>Mensagem</Label>
+              <Textarea
+                value={editMessage}
+                onChange={e => setEditMessage(e.target.value)}
+                rows={3}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Data e hora (horário de Brasília)</Label>
+              <Input
+                type="datetime-local"
+                value={editSendAt}
+                onChange={e => setEditSendAt(e.target.value)}
+              />
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Ao salvar, o lembrete volta para status pendente com o novo horário.
+            </p>
+            <div className="flex gap-2">
+              <Button variant="outline" className="flex-1" onClick={() => setEditOpen(false)}>
+                Cancelar
+              </Button>
+              <Button onClick={handleEdit} disabled={editSaving} className="flex-1">
+                {editSaving ? "Salvando..." : "Salvar alterações"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Filtros */}
       <div className="flex gap-2 flex-wrap">
         {(["all","pending","recurring","sent"] as const).map(f => (
@@ -265,7 +379,7 @@ export default function Lembretes() {
             {f === "all" && "Todos"}
             {f === "pending" && <>Pendentes {pendingCount > 0 && <Badge className="ml-1.5 text-[10px] h-4 px-1">{pendingCount}</Badge>}</>}
             {f === "recurring" && <>Recorrentes {recurringCount > 0 && <Badge className="ml-1.5 text-[10px] h-4 px-1 bg-violet-500">{recurringCount}</Badge>}</>}
-            {f === "sent" && "Enviados"}
+            {f === "sent" && <>Enviados {sentCount > 0 && <Badge className="ml-1.5 text-[10px] h-4 px-1 bg-green-600">{sentCount}</Badge>}</>}
           </Button>
         ))}
       </div>
@@ -275,18 +389,30 @@ export default function Lembretes() {
         <Card className="bg-card border-border">
           <CardContent className="py-14 text-center">
             <Bell className="h-10 w-10 text-muted-foreground/30 mx-auto mb-3" />
-            <p className="text-muted-foreground font-medium">
-              {filter === "all" ? "Nenhum lembrete ainda." : "Nenhum lembrete nesta categoria."}
-            </p>
-            <p className="text-sm text-muted-foreground/60 mt-1">
-              Crie um acima ou mande mensagem no WhatsApp: <em>"me lembra de X às 10h"</em>
-            </p>
+            <p className="text-muted-foreground font-medium">{empty.title}</p>
+            <p className="text-sm text-muted-foreground/60 mt-1">{empty.subtitle}</p>
           </CardContent>
         </Card>
       ) : (
         <div className="space-y-2">
+          {/* Limpar enviados */}
+          {filter === "sent" && filtered.length > 0 && (
+            <div className="flex justify-end">
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5 text-destructive hover:text-destructive border-destructive/30 hover:border-destructive/60"
+                onClick={handleClearSent}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                Limpar todos enviados
+              </Button>
+            </div>
+          )}
+
           {filtered.map(r => {
             const rec = recurrenceLabel(r);
+            const isRecurringPending = rec && r.status === "pending";
             return (
               <Card key={r.id} className="bg-card border-border hover:border-primary/20 transition-colors">
                 <CardContent className="py-4 flex items-start gap-4">
@@ -312,18 +438,46 @@ export default function Lembretes() {
                     </div>
                     <p className="text-xs text-muted-foreground truncate">{r.message}</p>
                     <p className="text-xs text-muted-foreground/60 mt-1">
-                      📅 {format(new Date(r.send_at), "dd 'de' MMMM 'às' HH:mm", { locale: ptBR })}
+                      {isRecurringPending
+                        ? <span className="text-violet-400/80 mr-1">próximo disparo:</span>
+                        : <span className="mr-1"></span>
+                      }
+                      {formatBrasilia(r.send_at)}
                       {r.source === "whatsapp" && <span className="ml-2 text-green-500/70">• via WhatsApp</span>}
                       {r.source === "manual" && <span className="ml-2 text-blue-500/70">• manual</span>}
                     </p>
                   </div>
 
-                  <button
-                    onClick={() => handleDelete(r.id)}
-                    className="text-muted-foreground hover:text-destructive transition-colors mt-1 flex-shrink-0"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
+                  <div className="flex items-center gap-1.5 mt-1 flex-shrink-0">
+                    {/* Retry button — only for failed reminders */}
+                    {r.status === "failed" && (
+                      <button
+                        onClick={() => handleRetry(r.id)}
+                        title="Reagendar para daqui 2 minutos"
+                        className="text-muted-foreground hover:text-amber-400 transition-colors"
+                      >
+                        <RefreshCw className="h-4 w-4" />
+                      </button>
+                    )}
+
+                    {/* Edit button */}
+                    <button
+                      onClick={() => openEdit(r)}
+                      title="Editar lembrete"
+                      className="text-muted-foreground hover:text-primary transition-colors"
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </button>
+
+                    {/* Delete button */}
+                    <button
+                      onClick={() => handleDelete(r.id)}
+                      title="Excluir lembrete"
+                      className="text-muted-foreground hover:text-destructive transition-colors"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
                 </CardContent>
               </Card>
             );
