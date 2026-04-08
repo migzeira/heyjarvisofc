@@ -64,7 +64,7 @@ export default function Integracoes() {
 
   const loadCredentials = async () => {
     try {
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      const supabaseUrl = (import.meta.env.VITE_SUPABASE_URL || "https://fnilyapvhhygfzcdxqjm.supabase.co");
       const res = await fetch(`${supabaseUrl}/functions/v1/admin-settings`, {
         headers: { Authorization: `Bearer ${session!.access_token}` },
       });
@@ -87,7 +87,7 @@ export default function Integracoes() {
       if (notionClientId) body.notion_client_id = notionClientId;
       if (notionClientSecret) body.notion_client_secret = notionClientSecret;
       if (Object.keys(body).length === 0) { toast.error("Preencha pelo menos um campo"); setCredSaving(false); return; }
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      const supabaseUrl = (import.meta.env.VITE_SUPABASE_URL || "https://fnilyapvhhygfzcdxqjm.supabase.co");
       const res = await fetch(`${supabaseUrl}/functions/v1/admin-settings`, {
         method: "POST",
         headers: { Authorization: `Bearer ${session!.access_token}`, "Content-Type": "application/json" },
@@ -150,7 +150,7 @@ export default function Integracoes() {
     }
     setConnecting(provider);
     try {
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      const supabaseUrl = (import.meta.env.VITE_SUPABASE_URL || "https://fnilyapvhhygfzcdxqjm.supabase.co");
       const res = await fetch(
         `${supabaseUrl}/functions/v1/oauth-init?provider=${provider}&user_id=${user!.id}`,
         { headers: { Authorization: `Bearer ${session.access_token}` } }
@@ -339,7 +339,7 @@ export default function Integracoes() {
     );
   };
 
-  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+  const supabaseUrl = (import.meta.env.VITE_SUPABASE_URL || "https://fnilyapvhhygfzcdxqjm.supabase.co") || "https://fnilyapvhhygfzcdxqjm.supabase.co";
   const callbackUrl = `${supabaseUrl}/functions/v1/oauth-callback`;
   const googleConfigured = isConfigured("google_client_id") && isConfigured("google_client_secret");
   const notionConfigured = isConfigured("notion_client_id") && isConfigured("notion_client_secret");

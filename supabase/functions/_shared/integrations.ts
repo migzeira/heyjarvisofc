@@ -76,24 +76,33 @@ async function getIntegration(userId: string, provider: string) {
   return data;
 }
 
-/** Cria evento no Google Calendar */
+/** Cria evento no Google Calendar e retorna o google_event_id */
 export async function syncGoogleCalendar(
   userId: string,
   title: string,
   date: string,
-  time: string | null
-): Promise<void> {
+  time: string | null,
+  endTime?: string | null,
+  description?: string | null,
+  location?: string | null
+): Promise<string | null> {
   const integration = await getIntegration(userId, "google_calendar");
-  if (!integration) return;
+  if (!integration) return null;
 
   const start = time
     ? { dateTime: `${date}T${time}:00`, timeZone: "America/Sao_Paulo" }
     : { date };
-  const end = time
-    ? { dateTime: `${date}T${time}:00`, timeZone: "America/Sao_Paulo" }
-    : { date };
+  const end = endTime
+    ? { dateTime: `${date}T${endTime}:00`, timeZone: "America/Sao_Paulo" }
+    : time
+      ? { dateTime: `${date}T${time}:00`, timeZone: "America/Sao_Paulo" }
+      : { date };
 
-  await fetch(
+  const body: Record<string, unknown> = { summary: title, start, end };
+  if (description) body.description = description;
+  if (location) body.location = location;
+
+  const res = await fetch(
     "https://www.googleapis.com/calendar/v3/calendars/primary/events",
     {
       method: "POST",
@@ -101,9 +110,85 @@ export async function syncGoogleCalendar(
         Authorization: `Bearer ${integration.access_token}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ summary: title, start, end }),
+      body: JSON.stringify(body),
     }
   );
+
+  if (res.ok) {
+    const data = await res.json();
+    return data.id ?? null; // google_event_id
+  }
+  console.error("Google Calendar create error:", res.status, await res.text());
+  return null;
+}
+
+/** Atualiza evento existente no Google Calendar */
+export async function updateGoogleCalendar(
+  userId: string,
+  googleEventId: string,
+  title: string,
+  date: string,
+  time: string | null,
+  endTime?: string | null,
+  description?: string | null,
+  location?: string | null
+): Promise<boolean> {
+  const integration = await getIntegration(userId, "google_calendar");
+  if (!integration) return false;
+
+  const start = time
+    ? { dateTime: `${date}T${time}:00`, timeZone: "America/Sao_Paulo" }
+    : { date };
+  const end = endTime
+    ? { dateTime: `${date}T${endTime}:00`, timeZone: "America/Sao_Paulo" }
+    : time
+      ? { dateTime: `${date}T${time}:00`, timeZone: "America/Sao_Paulo" }
+      : { date };
+
+  const body: Record<string, unknown> = { summary: title, start, end };
+  if (description) body.description = description;
+  if (location) body.location = location;
+
+  const res = await fetch(
+    `https://www.googleapis.com/calendar/v3/calendars/primary/events/${googleEventId}`,
+    {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${integration.access_token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    }
+  );
+
+  if (!res.ok) {
+    console.error("Google Calendar update error:", res.status, await res.text());
+  }
+  return res.ok;
+}
+
+/** Deleta evento do Google Calendar */
+export async function deleteGoogleCalendar(
+  userId: string,
+  googleEventId: string
+): Promise<boolean> {
+  const integration = await getIntegration(userId, "google_calendar");
+  if (!integration) return false;
+
+  const res = await fetch(
+    `https://www.googleapis.com/calendar/v3/calendars/primary/events/${googleEventId}`,
+    {
+      method: "DELETE",
+      headers: {
+        Authorization: `Bearer ${integration.access_token}`,
+      },
+    }
+  );
+
+  if (!res.ok && res.status !== 410) { // 410 = already deleted
+    console.error("Google Calendar delete error:", res.status, await res.text());
+  }
+  return res.ok || res.status === 410;
 }
 
 /** Adiciona linha ao Google Sheets */

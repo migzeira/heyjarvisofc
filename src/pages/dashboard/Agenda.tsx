@@ -419,7 +419,7 @@ export default function Agenda() {
   const loadGoogleEvents = useCallback(async () => {
     if (!user || !session?.access_token) return;
     try {
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      const supabaseUrl = (import.meta.env.VITE_SUPABASE_URL || "https://fnilyapvhhygfzcdxqjm.supabase.co");
       // Range: 60 dias atras ate 90 dias a frente
       const timeMin = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
       const timeMax = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString();
@@ -547,12 +547,63 @@ export default function Agenda() {
     }
   };
 
+  // Sync com Google Calendar (fire-and-forget, nao bloqueia UI)
+  const syncGoogle = async (action: "create" | "update" | "delete", data: Record<string, any>) => {
+    if (!googleConnected || !session?.access_token) return;
+    try {
+      const supabaseUrl = (import.meta.env.VITE_SUPABASE_URL || "https://fnilyapvhhygfzcdxqjm.supabase.co");
+      await fetch(`${supabaseUrl}/functions/v1/google-calendar-sync`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ action, ...data }),
+      });
+    } catch (err) {
+      console.error("Google Calendar sync error:", err);
+    }
+  };
+
+  // Detecta conflitos de horario com eventos existentes
+  const checkConflicts = (date: string, startTime: string, endTime: string | null): CalendarEvent[] => {
+    if (!startTime) return [];
+    const startMin = timeToMinutes(startTime);
+    const endMin = endTime ? timeToMinutes(endTime) : startMin + 60; // assume 1h se nao tiver end_time
+
+    return allEvents.filter(ev => {
+      if (ev.event_date !== date) return false;
+      if (!ev.event_time) return false;
+      if (ev.status === "cancelled") return false;
+      if (editingEvent && ev.id === editingEvent.id) return false; // ignora o proprio evento sendo editado
+
+      const evStart = timeToMinutes(ev.event_time);
+      const evEnd = ev.end_time ? timeToMinutes(ev.end_time) : evStart + 60;
+
+      // Dois eventos conflitam se um comeca antes do outro terminar
+      return startMin < evEnd && endMin > evStart;
+    });
+  };
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.title.trim()) {
       toast.error("Titulo e obrigatorio");
       return;
     }
+
+    // Verifica conflitos
+    if (form.event_time) {
+      const conflicts = checkConflicts(form.event_date, form.event_time, form.end_time || null);
+      if (conflicts.length > 0) {
+        const names = conflicts.map(c => `"${c.title}" (${formatTimeShort(c.event_time)})`).join(", ");
+        const confirmed = window.confirm(
+          `Conflito de horario detectado com: ${names}.\n\nDeseja salvar mesmo assim?`
+        );
+        if (!confirmed) return;
+      }
+    }
+
     setSaving(true);
 
     const payload: Record<string, any> = {
@@ -578,33 +629,50 @@ export default function Agenda() {
       else {
         toast.success("Evento atualizado!");
         setDialogOpen(false);
+        // Sync com Google Calendar (se conectado e evento tem google_event_id)
+        if (editingEvent.google_event_id) {
+          syncGoogle("update", { event: { ...payload, google_event_id: editingEvent.google_event_id } });
+        }
         loadData();
+        loadGoogleEvents();
       }
     } else {
-      const { error } = await supabase.from("events").insert({
+      const { data: inserted, error } = await supabase.from("events").insert({
         ...payload,
         user_id: user!.id,
         source: "manual",
         status: "pending",
-      } as any);
+      } as any).select("id").single();
       if (error) toast.error("Erro ao criar evento");
       else {
         toast.success("Evento criado!");
         setDialogOpen(false);
+        // Sync com Google Calendar (cria evento la tambem)
+        if (inserted?.id) {
+          syncGoogle("create", { event: payload, eventId: inserted.id });
+        }
         loadData();
+        loadGoogleEvents();
       }
     }
     setSaving(false);
   };
 
   const handleDelete = async (id: string) => {
+    // Busca google_event_id antes de deletar
+    const eventToDelete = events.find(e => e.id === id);
     const { error } = await supabase.from("events").delete().eq("id", id);
     if (error) toast.error("Erro ao excluir");
     else {
       toast.success("Evento excluido!");
       setSheetOpen(false);
       setDetailEvent(null);
+      // Sync: remove do Google Calendar tambem
+      if (eventToDelete?.google_event_id) {
+        syncGoogle("delete", { google_event_id: eventToDelete.google_event_id });
+      }
       loadData();
+      loadGoogleEvents();
     }
   };
 
