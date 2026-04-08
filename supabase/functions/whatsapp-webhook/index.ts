@@ -406,10 +406,13 @@ function classifyIntent(msg: string): Intent {
 // ─────────────────────────────────────────────
 
 function applyTemplate(template: string, vars: Record<string, string>): string {
-  return Object.entries(vars).reduce(
+  let result = Object.entries(vars).reduce(
     (t, [k, v]) => t.replaceAll(`{{${k}}}`, v),
     template
   );
+  // Converte \n literal (vindo do banco) em newline real
+  result = result.replace(/\\n/g, "\n");
+  return result;
 }
 
 async function handleFinanceRecord(
