@@ -75,6 +75,7 @@ export default function Financas() {
   const [period, setPeriod] = useState<Period>("mes");
   const [recurring, setRecurring] = useState<any[]>([]);
   const [recurringDialog, setRecurringDialog] = useState(false);
+  const [editingRecurring, setEditingRecurring] = useState<any>(null);
   const [recurringForm, setRecurringForm] = useState({
     description: "", amount: "", type: "expense", category: "outros",
     frequency: "monthly", next_date: format(new Date(), "yyyy-MM-dd"),
@@ -110,22 +111,41 @@ export default function Financas() {
 
   const handleAddRecurring = async (e: React.FormEvent) => {
     e.preventDefault();
-    const { error } = await (supabase.from("recurring_transactions" as any).insert({
-      user_id: user!.id,
+    const payload = {
       description: recurringForm.description,
       amount: parseFloat(recurringForm.amount),
       type: recurringForm.type,
       category: recurringForm.category,
       frequency: recurringForm.frequency,
       next_date: recurringForm.next_date,
-    }) as any);
-    if (error) toast.error("Erro ao criar recorrente: " + error.message);
-    else {
-      toast.success("Transação recorrente criada!");
-      setRecurringDialog(false);
-      setRecurringForm({ description: "", amount: "", type: "expense", category: "outros", frequency: "monthly", next_date: format(new Date(), "yyyy-MM-dd") });
-      loadData();
+    };
+
+    if (editingRecurring) {
+      const { error } = await (supabase.from("recurring_transactions" as any).update(payload as any).eq("id", editingRecurring.id) as any);
+      if (error) toast.error("Erro ao atualizar: " + error.message);
+      else { toast.success("Recorrente atualizada!"); }
+    } else {
+      const { error } = await (supabase.from("recurring_transactions" as any).insert({ ...payload, user_id: user!.id } as any) as any);
+      if (error) toast.error("Erro ao criar: " + error.message);
+      else { toast.success("Recorrente criada!"); }
     }
+    setRecurringDialog(false);
+    setEditingRecurring(null);
+    setRecurringForm({ description: "", amount: "", type: "expense", category: "outros", frequency: "monthly", next_date: format(new Date(), "yyyy-MM-dd") });
+    loadData();
+  };
+
+  const openEditRecurring = (r: any) => {
+    setEditingRecurring(r);
+    setRecurringForm({
+      description: r.description,
+      amount: String(r.amount),
+      type: r.type,
+      category: r.category,
+      frequency: r.frequency,
+      next_date: r.next_date,
+    });
+    setRecurringDialog(true);
   };
 
   const toggleRecurring = async (id: string, active: boolean) => {
@@ -668,12 +688,14 @@ export default function Financas() {
         <TabsContent value="recorrentes" className="space-y-4">
           <div className="flex items-center justify-between">
             <p className="text-sm text-muted-foreground">Transações processadas automaticamente todo dia às 06:00.</p>
-            <Dialog open={recurringDialog} onOpenChange={setRecurringDialog}>
+            <Dialog open={recurringDialog} onOpenChange={(v) => { setRecurringDialog(v); if (!v) setEditingRecurring(null); }}>
               <DialogTrigger asChild>
-                <Button size="sm"><Plus className="mr-2 h-4 w-4" /> Nova recorrente</Button>
+                <Button size="sm" onClick={() => { setEditingRecurring(null); setRecurringForm({ description: "", amount: "", type: "expense", category: "outros", frequency: "monthly", next_date: format(new Date(), "yyyy-MM-dd") }); }}>
+                  <Plus className="mr-2 h-4 w-4" /> Nova recorrente
+                </Button>
               </DialogTrigger>
               <DialogContent className="bg-card border-border">
-                <DialogHeader><DialogTitle>Transação recorrente</DialogTitle></DialogHeader>
+                <DialogHeader><DialogTitle>{editingRecurring ? "Editar" : "Nova"} transação recorrente</DialogTitle></DialogHeader>
                 <form onSubmit={handleAddRecurring} className="space-y-4">
                   <div className="space-y-2">
                     <Label>Descrição</Label>
@@ -720,7 +742,7 @@ export default function Financas() {
                       <SelectContent>{categories.map(c => <SelectItem key={c.id} value={c.name}>{c.name}</SelectItem>)}</SelectContent>
                     </Select>
                   </div>
-                  <Button type="submit" className="w-full">Criar</Button>
+                  <Button type="submit" className="w-full">{editingRecurring ? "Atualizar" : "Criar"}</Button>
                 </form>
               </DialogContent>
             </Dialog>
@@ -755,6 +777,9 @@ export default function Financas() {
                       R$ {Number(r.amount).toFixed(2)}
                     </p>
                     <Switch checked={r.active} onCheckedChange={v => toggleRecurring(r.id, v)} />
+                    <Button size="sm" variant="ghost" onClick={() => openEditRecurring(r)}>
+                      <DollarSign className="h-4 w-4" />
+                    </Button>
                     <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive" onClick={() => deleteRecurring(r.id)}>
                       <Trash2 className="h-4 w-4" />
                     </Button>

@@ -111,10 +111,11 @@ function getModuleDisabledMsg(
   modules: ModuleMap
 ): string {
   const INTENT_TO_MODULE: Partial<Record<Intent, keyof ModuleMap>> = {
-    finance_record:  "finance",
-    finance_report:  "finance",
-    budget_set:      "finance",
-    budget_query:    "finance",
+    finance_record:    "finance",
+    finance_report:    "finance",
+    budget_set:        "finance",
+    budget_query:      "finance",
+    recurring_create:  "finance",
     agenda_create:   "agenda",
     agenda_query:    "agenda",
     agenda_lookup:   "agenda",
@@ -258,6 +259,7 @@ type Intent =
   | "finance_report"
   | "budget_set"
   | "budget_query"
+  | "recurring_create"
   | "agenda_create"
   | "agenda_query"
   | "agenda_lookup"
@@ -295,6 +297,14 @@ function classifyIntent(msg: string): Intent {
     /como.{0,10}(estou|esta|tá|ta).{0,10}orcamento|meu orcamento|minha meta|status.{0,10}orcamento|orcamento de|meta de (gasto|alimenta|transport|morad|saude|lazer|educa|trabalh)/.test(m)
   )
     return "budget_query";
+
+  // Transação recorrente (antes de finance_record)
+  if (
+    /todo (dia|mes|m[eê]s|semana|ano).{0,30}(pago|gasto|recebo|ganho|cobr|custa|debito|aluguel|salario|netflix|spotify|gym|academia|assinatura|mensalidade|parcela|fatura|conta de)/i.test(m) ||
+    /(aluguel|salario|sal[aá]rio|netflix|spotify|academia|mensalidade|assinatura|parcela|fatura).{0,20}(todo|mensal|semanal|diario)/i.test(m) ||
+    /(criar|adicionar|cadastrar|registrar).{0,10}(recorrente|fixo|fixa)/i.test(m)
+  )
+    return "recurring_create";
 
   // Relatório financeiro (antes de finance_record para evitar falso positivo)
   if (
@@ -429,6 +439,82 @@ function applyTemplate(template: string, vars: Record<string, string>): string {
   // Converte \n literal (vindo do banco) em newline real
   result = result.replace(/\\n/g, "\n");
   return result;
+}
+
+// ─────────────────────────────────────────────
+// RECURRING TRANSACTION HANDLER
+// ─────────────────────────────────────────────
+
+async function handleRecurringCreate(userId: string, message: string): Promise<string> {
+  // Usa IA pra extrair dados da mensagem
+  const prompt = `Extraia de uma frase em português os dados de uma transação financeira recorrente.
+Retorne JSON puro (sem markdown): {"description":"nome curto","amount":número,"type":"expense"|"income","category":"alimentacao"|"transporte"|"moradia"|"saude"|"lazer"|"educacao"|"trabalho"|"outros","frequency":"daily"|"weekly"|"monthly"|"yearly","day_of_month":número|null}
+
+Exemplos:
+- "aluguel 1500 todo dia 5" → {"description":"Aluguel","amount":1500,"type":"expense","category":"moradia","frequency":"monthly","day_of_month":5}
+- "salário 8000 todo mês" → {"description":"Salário","amount":8000,"type":"income","category":"trabalho","frequency":"monthly","day_of_month":1}
+- "netflix 55.90 mensal" → {"description":"Netflix","amount":55.90,"type":"expense","category":"lazer","frequency":"monthly","day_of_month":null}
+
+Frase: "${message}"`;
+
+  const aiResponse = await chat(prompt);
+  let parsed: any;
+  try {
+    const jsonMatch = aiResponse.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error("No JSON");
+    parsed = JSON.parse(jsonMatch[0]);
+  } catch {
+    return "Não entendi. Exemplo: *aluguel 1500 todo dia 5* ou *Netflix 55 reais mensal*";
+  }
+
+  if (!parsed.amount || parsed.amount <= 0) {
+    return "Não consegui identificar o valor. Exemplo: *aluguel 1500 todo dia 5*";
+  }
+
+  // Calcula próxima data
+  const now = new Date();
+  let nextDate: string;
+  if (parsed.frequency === "monthly" && parsed.day_of_month) {
+    const day = Math.min(parsed.day_of_month, 28);
+    const month = now.getDate() > day ? now.getMonth() + 1 : now.getMonth();
+    const next = new Date(now.getFullYear(), month, day);
+    nextDate = next.toISOString().split("T")[0];
+  } else if (parsed.frequency === "weekly") {
+    const next = new Date(now);
+    next.setDate(now.getDate() + (7 - now.getDay()) % 7 || 7);
+    nextDate = next.toISOString().split("T")[0];
+  } else if (parsed.frequency === "yearly") {
+    const next = new Date(now.getFullYear() + 1, now.getMonth(), now.getDate());
+    nextDate = next.toISOString().split("T")[0];
+  } else {
+    // daily ou fallback
+    const next = new Date(now);
+    next.setDate(now.getDate() + 1);
+    nextDate = next.toISOString().split("T")[0];
+  }
+
+  const { error } = await supabase.from("recurring_transactions").insert({
+    user_id: userId,
+    description: parsed.description || "Recorrente",
+    amount: parsed.amount,
+    type: parsed.type || "expense",
+    category: parsed.category || "outros",
+    frequency: parsed.frequency || "monthly",
+    next_date: nextDate,
+    active: true,
+  });
+
+  if (error) {
+    console.error("Recurring create error:", error);
+    return "⚠️ Erro ao criar transação recorrente. Tente novamente.";
+  }
+
+  const freqLabels: Record<string, string> = { daily: "diária", weekly: "semanal", monthly: "mensal", yearly: "anual" };
+  const emoji = parsed.type === "income" ? "🟢" : "🔴";
+  const typeLabel = parsed.type === "income" ? "Receita" : "Gasto";
+  const nextFormatted = new Date(nextDate + "T12:00:00").toLocaleDateString("pt-BR", { day: "numeric", month: "long" });
+
+  return `✅ *${typeLabel} recorrente criado!*\n\n${emoji} ${parsed.description}\n💰 R$ ${parsed.amount.toFixed(2).replace(".", ",")}\n🔁 Frequência: ${freqLabels[parsed.frequency] || parsed.frequency}\n📅 Próxima cobrança: ${nextFormatted}\n\nSerá registrado automaticamente. Gerencie no app Minha Maya.`;
 }
 
 // ─────────────────────────────────────────────
@@ -3224,8 +3310,9 @@ function getHumanizedError(intent: string): string {
     case "agenda_delete":   return "⚠️ Não consegui remover o compromisso. Tente de novo em instantes.";
     case "notes_save":      return "⚠️ Não consegui salvar sua anotação. Pode tentar de novo?";
     case "finance_record":  return "⚠️ Não consegui registrar essa transação. Tente de novo. Ex: _Gastei 50 reais de almoço_";
-    case "budget_set":      return "⚠️ Não consegui definir o orçamento. Ex: _quero gastar no máximo 2000 em alimentação_";
-    case "budget_query":    return "⚠️ Não consegui consultar seus orçamentos. Tente de novo.";
+    case "budget_set":       return "⚠️ Não consegui definir o orçamento. Ex: _quero gastar no máximo 2000 em alimentação_";
+    case "budget_query":     return "⚠️ Não consegui consultar seus orçamentos. Tente de novo.";
+    case "recurring_create": return "⚠️ Não consegui criar a recorrente. Ex: _aluguel 1500 todo dia 5_";
     case "finance_report":  return "⚠️ Não consegui gerar o relatório financeiro agora. Tente de novo em instantes.";
     default:                return "⚠️ Ops, algo deu errado por aqui. Pode tentar de novo? 🙏";
   }
@@ -3492,10 +3579,11 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
 
     // Mapa intent → módulo necessário
     const INTENT_REQUIRES: Partial<Record<Intent, keyof ModuleMap>> = {
-      finance_record:  "finance",
-      finance_report:  "finance",
-      budget_set:      "finance",
-      budget_query:    "finance",
+      finance_record:    "finance",
+      finance_report:    "finance",
+      budget_set:        "finance",
+      budget_query:      "finance",
+      recurring_create:  "finance",
       agenda_create:   "agenda",
       agenda_query:    "agenda",
       agenda_lookup:   "agenda",
@@ -3544,6 +3632,8 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       responseText = await handleBudgetSet(profile.id, text);
     } else if (intent === "budget_query") {
       responseText = await handleBudgetQuery(profile.id, text);
+    } else if (intent === "recurring_create") {
+      responseText = await handleRecurringCreate(profile.id, text);
     } else if (intent === "finance_record") {
       responseText = await handleFinanceRecord(profile.id, sendPhone || replyTo, text, config);
     } else if (intent === "finance_report") {
