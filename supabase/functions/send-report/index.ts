@@ -9,7 +9,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { sendText, sendImage } from "../_shared/evolution.ts";
-import { generateExpenseChartBase64 } from "../_shared/chart.ts";
+import { generateExpenseChartUrl } from "../_shared/chart.ts";
 
 const supabase = createClient(
   Deno.env.get("SUPABASE_URL")!,
@@ -123,13 +123,13 @@ async function sendReports(startDate: string, endDate: string, periodLabel: stri
       // Envia grafico antes do texto (se houver gastos)
       if (totalExpense > 0) {
         try {
-          const chartBase64 = await generateExpenseChartBase64({
+          const chartUrl = await generateExpenseChartUrl({
             byCategory,
             periodLabel,
             totalExpense,
           });
-          if (chartBase64) {
-            await sendImage(phone, chartBase64, "");
+          if (chartUrl) {
+            await sendImage(phone, chartUrl, "", true);
           }
         } catch (chartErr) {
           console.error(`Chart error for ${user.id}:`, chartErr);

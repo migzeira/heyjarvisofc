@@ -1,7 +1,7 @@
 /**
  * chart.ts
- * Gera graficos financeiros como imagem PNG (base64) via QuickChart.io.
- * Usa Chart.js renderizado server-side — zero dependencias alem de fetch.
+ * Gera graficos financeiros como imagem via QuickChart.io.
+ * Retorna URL da imagem para envio direto pela Evolution API.
  */
 
 // Cores por categoria (paleta fixa para consistencia visual)
@@ -16,7 +16,6 @@ const CATEGORY_COLORS: Record<string, string> = {
   outros:      "#7C8CF8",
 };
 
-// Nomes bonitos para as categorias
 const CATEGORY_LABELS: Record<string, string> = {
   alimentacao: "Alimentacao",
   transporte:  "Transporte",
@@ -36,9 +35,9 @@ function formatBRL(value: number): string {
 
 /**
  * Gera um grafico doughnut de gastos por categoria.
- * Retorna base64 PNG ou null se falhar.
+ * Retorna URL publica da imagem PNG ou null se falhar.
  */
-export async function generateExpenseChartBase64(params: {
+export async function generateExpenseChartUrl(params: {
   byCategory: Record<string, number>;
   periodLabel: string;
   totalExpense: number;
@@ -51,7 +50,6 @@ export async function generateExpenseChartBase64(params: {
 
   if (entries.length === 0) return null;
 
-  // Monta labels com nome + valor + percentual
   const labels = entries.map(([cat, val]) => {
     const pct = totalExpense > 0 ? Math.round((val / totalExpense) * 100) : 0;
     const name = CATEGORY_LABELS[cat] || cat;
@@ -112,50 +110,26 @@ export async function generateExpenseChartBase64(params: {
     },
   };
 
-  const payload = {
-    version: "2",
-    backgroundColor: "#1a1a2e",
-    width: 600,
-    height: 600,
-    format: "png",
-    chart: chartConfig,
-  };
+  // Monta URL com chart config encodado — QuickChart aceita GET com ate ~16KB
+  const chartJson = JSON.stringify(chartConfig);
+  const encodedChart = encodeURIComponent(chartJson);
+  const chartUrl = `https://quickchart.io/chart?v=2&bkg=%231a1a2e&w=600&h=600&f=png&c=${encodedChart}`;
 
-  // Timeout de 5 segundos
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 5000);
-
+  // Verifica se a URL e valida (teste HEAD rapido)
   try {
-    const res = await fetch("https://quickchart.io/chart", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      signal: controller.signal,
-    });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+    const res = await fetch(chartUrl, { method: "HEAD", signal: controller.signal });
     clearTimeout(timer);
 
     if (!res.ok) {
-      console.error(`QuickChart error: ${res.status} ${await res.text()}`);
+      console.error(`[chart] QuickChart HEAD check failed: ${res.status}`);
       return null;
     }
-
-    // Converte imagem para base64
-    const arrayBuffer = await res.arrayBuffer();
-    const uint8 = new Uint8Array(arrayBuffer);
-    let binary = "";
-    for (let i = 0; i < uint8.length; i++) {
-      binary += String.fromCharCode(uint8[i]);
-    }
-    const base64 = btoa(binary);
-
-    return base64;
+    console.log(`[chart] Chart URL ready (${entries.length} categories, total: ${totalExpense})`);
+    return chartUrl;
   } catch (err) {
-    clearTimeout(timer);
-    if (err instanceof Error && err.name === "AbortError") {
-      console.error("QuickChart timeout after 5s");
-    } else {
-      console.error("QuickChart error:", err);
-    }
+    console.error("[chart] QuickChart URL validation failed:", err);
     return null;
   }
 }

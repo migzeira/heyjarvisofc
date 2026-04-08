@@ -71,10 +71,9 @@ export async function sendImage(
     mediatype: "image",
     mimetype: "image/png",
     caption,
+    media,
+    fileName: "relatorio.png",
   };
-
-  // Evolution API aceita base64 puro ou URL
-  body.media = media;
 
   await evolutionPost(`/message/sendMedia/${INSTANCE}`, body);
 }

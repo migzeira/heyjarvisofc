@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { sendText, sendImage, extractPhone, downloadMediaBase64, resolveLidToPhone } from "../_shared/evolution.ts";
-import { generateExpenseChartBase64 } from "../_shared/chart.ts";
+import { generateExpenseChartUrl } from "../_shared/chart.ts";
 import { syncGoogleCalendar, syncGoogleSheets, syncNotion } from "../_shared/integrations.ts";
 import {
   chat,
@@ -521,7 +521,7 @@ function detectCategory(m: string): string | null {
 async function handleFinanceReport(
   userId: string,
   message: string
-): Promise<{ text: string; chartBase64: string | null }> {
+): Promise<{ text: string; chartUrl: string | null }> {
   const m = message
     .toLowerCase()
     .normalize("NFD")
@@ -582,9 +582,9 @@ async function handleFinanceReport(
         return `📊 Nenhum gasto registrado para *${periodLabel}* ainda.`;
       }
       const catList = cats.map((c) => `${catEmojis[c] ?? "📌"} ${c}`).join(", ");
-      return { text: `📊 Não encontrei gastos com *${filterCategory}* em *${periodLabel}*.\n\nCategorias que você tem registros: ${catList}`, chartBase64: null };
+      return { text: `📊 Não encontrei gastos com *${filterCategory}* em *${periodLabel}*.\n\nCategorias que você tem registros: ${catList}`, chartUrl: null };
     }
-    return { text: `📊 Nenhum registro encontrado para *${periodLabel}*.`, chartBase64: null };
+    return { text: `📊 Nenhum registro encontrado para *${periodLabel}*.`, chartUrl: null };
   }
 
   // Relatório de categoria específica
@@ -599,7 +599,7 @@ async function handleFinanceReport(
     r += lines.join("\n");
     if (transactions.length > 5) r += `\n_...e mais ${transactions.length - 5} registro(s)_`;
     r += `\n\n💸 *Total: R$ ${total.toFixed(2).replace(".", ",")}*`;
-    return { text: r, chartBase64: null };
+    return { text: r, chartUrl: null };
   }
 
   const expenses = transactions.filter((t) => t.type === "expense");
@@ -650,10 +650,10 @@ async function handleFinanceReport(
 
   report += `\n\n📱 Ver detalhes completos no app Minha Maya`;
 
-  // Gera grafico doughnut (nao-bloqueante: se falhar, envia so texto)
-  let chartBase64: string | null = null;
+  // Gera URL do grafico doughnut (nao-bloqueante: se falhar, envia so texto)
+  let chartUrl: string | null = null;
   try {
-    chartBase64 = await generateExpenseChartBase64({
+    chartUrl = await generateExpenseChartUrl({
       byCategory,
       periodLabel,
       totalExpense,
@@ -662,7 +662,7 @@ async function handleFinanceReport(
     console.error("Chart generation failed:", err);
   }
 
-  return { text: report, chartBase64 };
+  return { text: report, chartUrl };
 }
 
 // Mapa de cores por tipo de evento
@@ -3313,13 +3313,18 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       const reportResult = await handleFinanceReport(profile.id, text);
       responseText = reportResult.text;
       // Envia grafico antes do texto (se disponivel)
-      if (reportResult.chartBase64) {
+      if (reportResult.chartUrl) {
+        console.log(`[finance_report] Chart URL ready: ${reportResult.chartUrl.slice(0, 80)}...`);
         try {
-          await sendImage(sendPhone || replyTo, reportResult.chartBase64, "");
+          const imgTarget = sendPhone || replyTo;
+          console.log(`[finance_report] Sending chart to: ${imgTarget}`);
+          await sendImage(imgTarget, reportResult.chartUrl, "", true);
+          console.log("[finance_report] Chart image sent successfully");
         } catch (chartErr) {
-          console.error("Failed to send chart image:", chartErr);
-          // Nao-fatal: texto sera enviado normalmente abaixo
+          console.error("[finance_report] Failed to send chart image:", chartErr);
         }
+      } else {
+        console.log("[finance_report] No chart generated");
       }
     } else if (intent === "agenda_create") {
       const result = await handleAgendaCreate(profile.id, sendPhone || replyTo, text, session, language, userNickname, userTz);
