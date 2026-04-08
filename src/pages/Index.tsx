@@ -5,6 +5,7 @@ import {
   MessageCircle, Check, ArrowRight,
   Star, Shield, Sparkles, Mic, Camera, Lock, RefreshCw,
   ChevronDown, BarChart3, FileText, Table2, Zap, CalendarDays,
+  Menu, X,
 } from "lucide-react";
 import logoEscrita from "@/assets/logo_escrita.png";
 import logoChats from "@/assets/logo_chats.png";
