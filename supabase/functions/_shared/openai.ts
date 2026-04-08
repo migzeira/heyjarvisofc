@@ -305,6 +305,124 @@ Responda SOMENTE com o JSON.`;
   return JSON.parse(result) as ExtractedAgendaEdit;
 }
 
+// ─────────────────────────────────────────────
+// SMART STATEMENT IMPORT — Feature #15
+// ─────────────────────────────────────────────
+
+export interface StatementExtraction {
+  document_type: "extrato" | "fatura" | "nota_fiscal" | "comprovante" | "unknown";
+  institution?: string;
+  period?: string;
+  transactions: Array<{
+    amount: number;
+    description: string;
+    type: "expense" | "income";
+    category: string;
+    date?: string;
+  }>;
+  total_expense: number;
+  total_income: number;
+}
+
+/**
+ * Analisa imagem com Claude Vision e detecta tipo de documento financeiro.
+ * Suporta: extrato bancário, fatura de cartão, nota fiscal/cupom, comprovante de pagamento.
+ */
+export async function extractStatementFromImage(
+  base64: string,
+  mimetype: string
+): Promise<StatementExtraction> {
+  const fallback: StatementExtraction = {
+    document_type: "unknown",
+    transactions: [],
+    total_expense: 0,
+    total_income: 0,
+  };
+
+  const mediaType = (mimetype || "image/jpeg") as "image/jpeg" | "image/png" | "image/gif" | "image/webp";
+
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": ANTHROPIC_KEY,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model: "claude-haiku-4-5",
+      max_tokens: 2048,
+      system: `Você é um extrator especializado de documentos financeiros brasileiros. Analise imagens e retorne APENAS JSON válido, sem markdown, sem explicações.`,
+      messages: [{
+        role: "user",
+        content: [
+          {
+            type: "image",
+            source: { type: "base64", media_type: mediaType, data: base64 },
+          },
+          {
+            type: "text",
+            text: `Analise esta imagem e identifique o tipo de documento financeiro.
+
+Tipos possíveis:
+- "extrato": extrato bancário com múltiplos lançamentos de débito/crédito
+- "fatura": fatura de cartão de crédito com lista de compras
+- "nota_fiscal": nota fiscal, cupom fiscal ou recibo de loja (1-3 itens geralmente)
+- "comprovante": comprovante de PIX, TED, boleto ou transferência (pagamento único)
+- "unknown": não é documento financeiro
+
+Para cada transação visível extraia:
+- amount: valor numérico (positivo sempre)
+- description: descrição/estabelecimento
+- type: "expense" (débito/compra/pagamento) ou "income" (crédito/recebimento/salário)
+- category: uma de [alimentacao, transporte, moradia, saude, lazer, educacao, trabalho, outros]
+- date: data no formato YYYY-MM-DD se visível, senão null
+
+Regras de categoria por nome do estabelecimento/descrição:
+- alimentacao: iFood, Rappi, Uber Eats, ifood, restaurante, lanchonete, padaria, supermercado, mercado, açougue, peixaria, McDonald's, Burger King, KFC, Subway, pizza, hamburguer
+- transporte: Uber, 99, Cabify, Lyft, taxi, ônibus, metrô, CPTM, posto de gasolina, combustível, estacionamento, pedágio, Autopass
+- moradia: aluguel, condomínio, IPTU, água, luz, gás, energia, internet, Vivo, Claro, TIM, Oi, NET, GVT
+- saude: farmácia, drogaria, médico, hospital, clínica, plano de saúde, Unimed, dentista, exame
+- lazer: Netflix, Spotify, Steam, Prime Video, Disney+, HBO, Apple TV, cinema, teatro, show, viagem, hotel, turismo, jogo
+- educacao: escola, faculdade, curso, livro, Udemy, Alura, Coursera, mensalidade
+- trabalho: salário, freelance, pagamento de serviço, nota fiscal emitida, CNPJ
+- outros: qualquer coisa não categorizada acima
+
+Para "extrato" e "fatura": extraia TODAS as transações visíveis.
+Para "comprovante": 1 transação (type=expense se você pagou, income se recebeu).
+Para "nota_fiscal": extraia os itens da nota.
+
+Retorne SOMENTE este JSON (sem markdown):
+{
+  "document_type": "extrato|fatura|nota_fiscal|comprovante|unknown",
+  "institution": "nome do banco/instituição ou null",
+  "period": "período do extrato/fatura ou null",
+  "transactions": [...],
+  "total_expense": número,
+  "total_income": número
+}`,
+          },
+        ],
+      }],
+    }),
+  });
+
+  if (!res.ok) return fallback;
+
+  const data = await res.json();
+  const text = (data.content?.[0]?.text as string) ?? "";
+  try {
+    const parsed = JSON.parse(text) as StatementExtraction;
+    if (!parsed.document_type) return fallback;
+    // Garante campos obrigatórios
+    parsed.transactions = parsed.transactions ?? [];
+    parsed.total_expense = parsed.total_expense ?? parsed.transactions.filter(t => t.type === "expense").reduce((s, t) => s + t.amount, 0);
+    parsed.total_income = parsed.total_income ?? parsed.transactions.filter(t => t.type === "income").reduce((s, t) => s + t.amount, 0);
+    return parsed;
+  } catch {
+    return fallback;
+  }
+}
+
 /**
  * Analisa imagem com Claude Vision.
  * Se for nota fiscal/recibo, extrai transações. Retorna array vazio se não for.

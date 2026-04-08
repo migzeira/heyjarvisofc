@@ -12,9 +12,11 @@ import {
   assistantChat,
   transcribeAudio,
   extractReceiptFromImage,
+  extractStatementFromImage,
   parseReminderIntent,
   type ChatMessage,
   type ExtractedEvent,
+  type StatementExtraction,
 } from "../_shared/openai.ts";
 import { logError, fromThrown } from "../_shared/logger.ts";
 
@@ -275,6 +277,7 @@ type Intent =
   | "reminder_edit"
   | "reminder_snooze"
   | "event_followup"
+  | "statement_import"
   | "ai_chat";
 
 function classifyIntent(msg: string): Intent {
@@ -3643,6 +3646,119 @@ async function handleEventFollowup(
   };
 }
 
+// ─────────────────────────────────────────────
+// STATEMENT IMPORT HELPERS — Feature #15
+// ─────────────────────────────────────────────
+
+const CATEGORY_EMOJI: Record<string, string> = {
+  alimentacao: "🍔",
+  transporte: "🚗",
+  moradia: "🏠",
+  saude: "💊",
+  lazer: "🎮",
+  educacao: "📚",
+  trabalho: "💼",
+  outros: "📦",
+};
+
+function fmtBRL(value: number): string {
+  return value.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function docTypeLabel(dt: StatementExtraction["document_type"]): string {
+  switch (dt) {
+    case "extrato":    return "Extrato Bancário";
+    case "fatura":     return "Fatura do Cartão";
+    case "nota_fiscal": return "Nota Fiscal";
+    case "comprovante": return "Comprovante";
+    default:           return "Documento";
+  }
+}
+
+function buildStatementPreview(extraction: StatementExtraction): string {
+  const { document_type, institution, period, transactions, total_expense, total_income } = extraction;
+  const count = transactions.length;
+  const header = `📊 *${docTypeLabel(document_type)}${institution ? ` — ${institution}` : ""}${period ? ` ${period}` : ""}*\nEncontrei *${count} transação(ões)*:\n`;
+
+  const preview = transactions.slice(0, 8).map(t => {
+    const dot = t.type === "expense" ? "🔴" : "🟢";
+    const catEmoji = CATEGORY_EMOJI[t.category] ?? "📦";
+    return `${dot} ${t.description} R$ ${fmtBRL(t.amount)} (${catEmoji} ${t.category})`;
+  }).join("\n");
+
+  const remaining = count > 8 ? `\n_+ ${count - 8} mais..._` : "";
+
+  const totals = [
+    `\n💸 Total gastos: *R$ ${fmtBRL(total_expense)}*`,
+    total_income > 0 ? `💰 Total receitas: *R$ ${fmtBRL(total_income)}*` : "",
+  ].filter(Boolean).join("\n");
+
+  return `${header}\n${preview}${remaining}\n${totals}\n\nConfirmar registro de *todas as ${count} transações*?\nResponda *sim* para salvar ou *não* para cancelar.`;
+}
+
+async function handleStatementConfirm(
+  userId: string,
+  phone: string,
+  message: string,
+  session: Record<string, unknown>
+): Promise<{ response: string; pendingAction?: string; pendingContext?: unknown }> {
+  const ctx = (session?.pending_context ?? {}) as Record<string, unknown>;
+  const transactions = (ctx.transactions ?? []) as StatementExtraction["transactions"];
+  const total_expense = (ctx.total_expense ?? 0) as number;
+  const total_income = (ctx.total_income ?? 0) as number;
+
+  const m = message.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+  if (/^(sim|confirmar|salvar|ok|yes|pode|confirmo|salvo)/.test(m)) {
+    if (transactions.length === 0) {
+      return { response: "Não há transações para salvar. Envie uma nova imagem." };
+    }
+
+    const today = new Date().toLocaleDateString("sv-SE");
+    const rows = transactions.map(t => ({
+      user_id: userId,
+      type: t.type,
+      amount: t.amount,
+      category: t.category,
+      description: t.description,
+      transaction_date: t.date || today,
+      source: "whatsapp_image",
+    }));
+
+    const { error } = await supabase.from("transactions").insert(rows);
+    if (error) {
+      console.error("handleStatementConfirm insert error:", error);
+      return { response: "⚠️ Erro ao salvar as transações. Tente novamente enviando a imagem." };
+    }
+
+    const count = transactions.length;
+    const net = total_income - total_expense;
+    const netSign = net >= 0 ? "+" : "-";
+    const netFormatted = `${netSign}R$ ${fmtBRL(Math.abs(net))}`;
+
+    const successMsg = [
+      `✅ *${count} transação(ões) registrada(s) com sucesso!*`,
+      ``,
+      `💸 Gastos: R$ ${fmtBRL(total_expense)}`,
+      total_income > 0 ? `💰 Receitas: R$ ${fmtBRL(total_income)}` : null,
+      `💵 Líquido: ${netFormatted}`,
+      ``,
+      `Tudo salvo! Para ver o resumo completo, acesse o dashboard ou me peça: _"relatório financeiro"_ 📊`,
+    ].filter(line => line !== null).join("\n");
+
+    return { response: successMsg, pendingAction: undefined, pendingContext: undefined };
+
+  } else if (/^(nao|não|cancela|cancelar|cancel|no\b)/.test(m)) {
+    return { response: "Ok, cancelado! Nada foi registrado. 🗑️", pendingAction: undefined, pendingContext: undefined };
+  } else {
+    return {
+      response: "Responda *sim* para confirmar o registro ou *não* para cancelar.",
+      pendingAction: "statement_import",
+      pendingContext: ctx,
+    };
+  }
+}
+
 async function processImageMessage(
   replyTo: string,
   base64: string,
@@ -3653,29 +3769,106 @@ async function processImageMessage(
 ): Promise<unknown> {
   const log: string[] = ["image_processing"];
   try {
-    const transactions = await extractReceiptFromImage(base64, mimetype);
+    // 1. Extract using smart statement analysis
+    const extraction = await extractStatementFromImage(base64, mimetype);
+    log.push(`doc_type: ${extraction.document_type}, tx_count: ${extraction.transactions.length}`);
 
-    if (transactions.length === 0) {
-      // Não é nota fiscal — apenas confirma recebimento
-      log.push("not_a_receipt");
-      // Tentamos encontrar o perfil para dar resposta personalizada
-      const phone = replyTo.replace(/@s\.whatsapp\.net$/, "").replace(/:\d+$/, "");
-      const { data: profile } = await supabase
+    // 2. Normalize phone for profile lookup and session key
+    const phone = replyTo.replace(/@s\.whatsapp\.net$/, "").replace(/@lid$/, "").replace(/:\d+$/, "");
+
+    // 3. Unknown or no transactions
+    if (extraction.document_type === "unknown" || extraction.transactions.length === 0) {
+      log.push("not_a_financial_doc");
+      const { data: profileBasic } = await supabase
         .from("profiles")
-        .select("phone_number, account_status")
+        .select("phone_number")
         .or(`phone_number.eq.${phone},phone_number.eq.+${phone}`)
         .maybeSingle();
-      const sendPhone = profile?.phone_number ?? replyTo;
-      await sendText(sendPhone, "📷 Recebi sua imagem! Não identifiquei como nota fiscal.\n\nPara registrar um gasto, me envie uma mensagem de texto. Ex: *gastei R$50 de almoço*");
+      const sendPhone = profileBasic?.phone_number ?? replyTo;
+      await sendText(
+        sendPhone || replyTo,
+        "📷 Recebi a imagem! Não identifiquei um extrato ou nota fiscal.\n\nPosso registrar:\n• 📄 *Extrato bancário* — foto do app ou PDF\n• 💳 *Fatura do cartão* — com lista de compras\n• 🧾 *Nota fiscal / cupom*\n• 📱 *Comprovante* de PIX, TED ou boleto\n\nOu me diga por texto: _gastei R$50 de almoço_"
+      );
       return log;
     }
 
-    // Salva como transação e processa igual texto
-    const fakeText = transactions.map(t =>
-      `${t.type === "expense" ? "gastei" : "recebi"} ${t.amount} reais de ${t.description}`
-    ).join(", ");
+    // 4. Resolve full profile (same multi-fallback pattern as processMessage)
+    let profile: { id: string; phone_number: string; account_status: string } | null = null;
 
-    return await processMessage(replyTo, `[📷 Nota fiscal] ${fakeText}`, lid, messageId, pushName, fakeText);
+    if (lid) {
+      const { data } = await supabase
+        .from("profiles")
+        .select("id, phone_number, account_status")
+        .eq("whatsapp_lid", lid)
+        .maybeSingle();
+      profile = data;
+    }
+    if (!profile) {
+      const { data } = await supabase
+        .from("profiles")
+        .select("id, phone_number, account_status")
+        .or(`phone_number.eq.${phone},phone_number.eq.+${phone}`)
+        .maybeSingle();
+      profile = data;
+    }
+
+    if (!profile) {
+      log.push("unknown_number");
+      await sendText(replyTo, "Para processar seu extrato, vincule seu número no app Minha Maya primeiro.");
+      return log;
+    }
+
+    const sendPhone = profile.phone_number?.replace(/\D/g, "") ?? phone;
+    const sessionId = profile.phone_number?.replace(/\D/g, "") || phone;
+
+    // 5. Single transaction (nota_fiscal or comprovante with 1 item) — save directly
+    if (extraction.transactions.length === 1) {
+      const t = extraction.transactions[0];
+      const today = new Date().toLocaleDateString("sv-SE");
+      await supabase.from("transactions").insert({
+        user_id: profile.id,
+        type: t.type,
+        amount: t.amount,
+        category: t.category,
+        description: t.description,
+        transaction_date: t.date || today,
+        source: "whatsapp_image",
+      });
+      const dot = t.type === "expense" ? "🔴" : "🟢";
+      const catEmoji = CATEGORY_EMOJI[t.category] ?? "📦";
+      const confirmMsg = `✅ *${docTypeLabel(extraction.document_type)} registrado!*\n\n${dot} ${t.description}\n${catEmoji} Categoria: ${t.category}\n💵 Valor: R$ ${fmtBRL(t.amount)}\n\nSalvo com sucesso! 🎉`;
+      await sendText(sendPhone || replyTo, confirmMsg);
+      log.push("single_tx_saved");
+      return log;
+    }
+
+    // 6. Multiple transactions — build preview and store pending confirmation
+    const preview = buildStatementPreview(extraction);
+
+    await supabase.from("whatsapp_sessions").upsert(
+      {
+        user_id: profile.id,
+        phone_number: sessionId,
+        pending_action: "statement_import",
+        pending_context: {
+          step: "statement_confirm",
+          transactions: extraction.transactions,
+          document_type: extraction.document_type,
+          institution: extraction.institution,
+          period: extraction.period,
+          total_expense: extraction.total_expense,
+          total_income: extraction.total_income,
+        },
+        last_activity: new Date().toISOString(),
+        last_processed_id: messageId ?? null,
+      },
+      { onConflict: "phone_number" }
+    );
+
+    await sendText(sendPhone || replyTo, preview);
+    log.push("preview_sent");
+    return log;
+
   } catch (err) {
     log.push(`ERROR: ${err instanceof Error ? err.message : String(err)}`);
     console.error("processImageMessage error:", err);
@@ -4080,6 +4273,11 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       responseText = followupResult.response;
       pendingAction = followupResult.pendingAction;
       pendingContext = followupResult.pendingContext;
+    } else if (intent === "statement_import") {
+      const stmtResult = await handleStatementConfirm(profile.id, sendPhone || replyTo, text, session ?? {});
+      responseText = stmtResult.response;
+      pendingAction = stmtResult.pendingAction;
+      pendingContext = stmtResult.pendingContext;
     } else {
       // Chat geral com IA (moduleChat já verificado acima via moduleActive)
       // Informa à IA quais módulos estão ativos/inativos para consistência
