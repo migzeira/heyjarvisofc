@@ -481,10 +481,10 @@ export default function Habitos() {
     // Deactivate the habit
     await (supabase.from("habits" as any).update({ is_active: false } as any).eq("id", habitId) as any);
     // Delete pending habit reminders (no "cancelled" status exists — just delete them)
-    await (supabase.from("reminders" as any)
+    await (supabase.from("reminders" as any) as any)
       .delete()
-      .eq("habit_id" as any, habitId)
-      .eq("status", "pending") as any);
+      .eq("habit_id", habitId)
+      .eq("status", "pending");
     toast.success("Hábito desativado.");
     loadData();
   };
