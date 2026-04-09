@@ -536,10 +536,10 @@ export default function Habitos() {
         } as any).eq("id", habitId) as any);
 
         // Delete existing pending reminders before recreating
-        await (supabase.from("reminders" as any)
+        await (supabase.from("reminders" as any) as any)
           .delete()
-          .eq("habit_id" as any, habitId)
-          .eq("status", "pending") as any);
+          .eq("habit_id", habitId)
+          .eq("status", "pending");
       } else {
         // Create new habit record
         // Bug #6: ON CONFLICT (user_id, preset_key) → reactivate the existing deactivated one
