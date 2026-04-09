@@ -712,10 +712,10 @@ export default function Habitos() {
       if (error) { toast.error("Erro ao atualizar"); return; }
       // Recreate reminders (delete old pending ones, insert new)
       if (userPhone) {
-        await (supabase.from("reminders" as any)
+        await (supabase.from("reminders" as any) as any)
           .delete()
-          .eq("habit_id" as any, editingCustom.id)
-          .eq("status", "pending") as any);
+          .eq("habit_id", editingCustom.id)
+          .eq("status", "pending");
         await (supabase.from("reminders" as any).insert({
           user_id: user!.id,
           whatsapp_number: userPhone,
