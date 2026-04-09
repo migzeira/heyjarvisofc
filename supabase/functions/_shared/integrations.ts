@@ -211,11 +211,20 @@ export async function createCalendarEventWithMeet(
   const start = time
     ? { dateTime: `${date}T${time}:00`, timeZone: "America/Sao_Paulo" }
     : { date };
-  const end = endTime
-    ? { dateTime: `${date}T${endTime}:00`, timeZone: "America/Sao_Paulo" }
-    : time
-      ? { dateTime: `${date}T${time}:00`, timeZone: "America/Sao_Paulo" }
-      : { date };
+
+  // End: explicit endTime → use it; time but no endTime → default +1h; all-day → next day
+  let end: Record<string, string>;
+  if (endTime) {
+    end = { dateTime: `${date}T${endTime}:00`, timeZone: "America/Sao_Paulo" };
+  } else if (time) {
+    const [h, m] = time.split(":").map(Number);
+    const endH = String((h + 1) % 24).padStart(2, "0");
+    end = { dateTime: `${date}T${endH}:${String(m ?? 0).padStart(2, "0")}:00`, timeZone: "America/Sao_Paulo" };
+  } else {
+    const d = new Date(`${date}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + 1);
+    end = { date: d.toISOString().slice(0, 10) };
+  }
 
   const body: Record<string, unknown> = {
     summary: title,

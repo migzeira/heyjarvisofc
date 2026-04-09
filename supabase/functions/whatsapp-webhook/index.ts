@@ -3820,12 +3820,12 @@ async function handleDocumentMessage(
 async function handleContactMessage(
   contactData: Record<string, unknown>,
   replyTo: string,
-  lid: string,
+  lid: string | null,
 ): Promise<string[]> {
   const log: string[] = [];
 
   // Resolve user profile pelo LID/phone
-  const profile = await resolveProfileForShadow(lid, replyTo);
+  const { profile } = await resolveProfileForShadow(replyTo, lid);
   if (!profile) {
     log.push("profile not found");
     return log;
