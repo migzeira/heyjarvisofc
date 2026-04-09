@@ -481,10 +481,10 @@ export default function Habitos() {
     // Deactivate the habit
     await (supabase.from("habits" as any).update({ is_active: false } as any).eq("id", habitId) as any);
     // Delete pending habit reminders (no "cancelled" status exists — just delete them)
-    await (supabase.from("reminders" as any)
+    await (supabase.from("reminders" as any) as any)
       .delete()
-      .eq("habit_id" as any, habitId)
-      .eq("status", "pending") as any);
+      .eq("habit_id", habitId)
+      .eq("status", "pending");
     toast.success("Hábito desativado.");
     loadData();
   };
@@ -536,10 +536,10 @@ export default function Habitos() {
         } as any).eq("id", habitId) as any);
 
         // Delete existing pending reminders before recreating
-        await (supabase.from("reminders" as any)
+        await (supabase.from("reminders" as any) as any)
           .delete()
-          .eq("habit_id" as any, habitId)
-          .eq("status", "pending") as any);
+          .eq("habit_id", habitId)
+          .eq("status", "pending");
       } else {
         // Create new habit record
         // Bug #6: ON CONFLICT (user_id, preset_key) → reactivate the existing deactivated one
@@ -712,10 +712,10 @@ export default function Habitos() {
       if (error) { toast.error("Erro ao atualizar"); return; }
       // Recreate reminders (delete old pending ones, insert new)
       if (userPhone) {
-        await (supabase.from("reminders" as any)
+        await (supabase.from("reminders" as any) as any)
           .delete()
-          .eq("habit_id" as any, editingCustom.id)
-          .eq("status", "pending") as any);
+          .eq("habit_id", editingCustom.id)
+          .eq("status", "pending");
         await (supabase.from("reminders" as any).insert({
           user_id: user!.id,
           whatsapp_number: userPhone,
