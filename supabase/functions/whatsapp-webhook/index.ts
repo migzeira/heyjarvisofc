@@ -3859,6 +3859,32 @@ async function handleContactMessage(
 }
 
 /**
+ * Monta o rodapé de apresentação da Maya enviado a contatos externos.
+ * Inclui número do usuário (para responder diretamente) + CTA minhamaya.com.
+ */
+function buildMayaCTA(userName: string, userPhone: string): string {
+  return (
+    `\n\n_——————————_\n` +
+    `Para falar diretamente com *${userName}*, o número é: *${userPhone}*\n\n` +
+    `Quer ter uma assistente virtual igual a mim? 🤖✨\n` +
+    `Acesse 👉 *minhamaya.com* e descubra tudo que posso fazer por você diretamente no WhatsApp — agendamentos, finanças, lembretes e muito mais!\n\n` +
+    `Até mais! 🤍\n*— Maya*`
+  );
+}
+
+/** Formata número de telefone para exibição humana (+55 11 99999-9999) */
+function phoneForDisplay(raw: string): string {
+  const n = raw.replace(/@.*$/, "").replace(/\D/g, "");
+  if (n.startsWith("55") && n.length === 13) {
+    return `+55 (${n.slice(2, 4)}) ${n.slice(4, 9)}-${n.slice(9)}`;
+  }
+  if (n.startsWith("55") && n.length === 12) {
+    return `+55 (${n.slice(2, 4)}) ${n.slice(4, 8)}-${n.slice(8)}`;
+  }
+  return n.length > 0 ? `+${n}` : raw;
+}
+
+/**
  * Envia mensagem para um contato salvo, imediatamente ou com atraso.
  * Ex: "manda pra Cibele dizendo pegar pão" / "daqui 30min manda pra João que..."
  */
@@ -3902,12 +3928,31 @@ async function handleSendToContact(
     return `Não encontrei *${contactName}* nos seus contatos. Compartilhe o contato comigo no WhatsApp primeiro! 📇`;
   }
 
-  // Extrai conteúdo da mensagem: tudo após "dizendo", "dizer", "que", ":"
+  // Extrai conteúdo da mensagem: tudo após "dizendo", "dizer", "falando", "que", ":"
   const msgMatch = text.match(/(?:dizendo|dizer|falando|que\s+(?!tal\b)|:\s*)(.+)/i);
   const msgContent = msgMatch ? msgMatch[1].trim() : text;
 
-  const senderLabel = userNickname || pushName || "seu contato";
-  const outgoing = `💬 _Mensagem de ${senderLabel} (via ${agentName})_\n\n${msgContent}`;
+  // Nome e saudação com horário do dia
+  const senderName = userNickname || pushName || "seu contato";
+  const contactFirstName = found.name.split(" ")[0];
+  const hour = new Date().toLocaleString("en-US", { timeZone: userTz, hour: "numeric", hour12: false });
+  const h = parseInt(hour);
+  const greeting = h < 12 ? "Bom dia" : h < 18 ? "Boa tarde" : "Boa noite";
+
+  // Busca telefone real do usuário para o CTA
+  const { data: userProfile } = await supabase
+    .from("profiles")
+    .select("phone_number")
+    .eq("id", userId)
+    .maybeSingle();
+  const userPhone = phoneForDisplay(userProfile?.phone_number ?? replyTo);
+
+  const outgoing =
+    `${greeting}, *${contactFirstName}*! 😊\n\n` +
+    `Aqui é a *${agentName}*, assistente virtual do *${senderName}*.\n\n` +
+    `Ele(a) me pediu para te passar um recado:\n\n` +
+    `💬 _"${msgContent}"_` +
+    buildMayaCTA(senderName, userPhone);
 
   if (delayMs > 0) {
     const sendAt = new Date(Date.now() + delayMs).toISOString();
@@ -4026,7 +4071,7 @@ async function handleScheduleMeeting(
           user_id: userId,
           whatsapp_number: found.phone,
           title: `Lembrete reunião em 10 min`,
-          message: `⏰ *Lembrete!*\nOi *${found.name}*! Daqui 10 minutos você tem reunião com *${userNickname || pushName}*${meetSuffix}`,
+          message: `⏰ *Lembrete, ${found.name.split(" ")[0]}!*\n\nDaqui 10 minutos você tem reunião com *${userNickname || pushName}*!${meetSuffix}\n\n_— ${agentName}, assistente virtual de ${userNickname || pushName}_`,
           send_at: reminderAt,
           recurrence: "none",
           status: "pending",
@@ -4038,16 +4083,26 @@ async function handleScheduleMeeting(
     }
   }
 
-  // Notifica o contato via WhatsApp
+  // Busca telefone real do usuário para o CTA
+  const { data: userProfile } = await supabase
+    .from("profiles")
+    .select("phone_number")
+    .eq("id", userId)
+    .maybeSingle();
+  const userPhone = phoneForDisplay(userProfile?.phone_number ?? replyTo);
+
+  // Notifica o contato via WhatsApp — mensagem criativa com CTA
   const dateLabel = formatDateBR(extracted.date);
   const timeLabel = extracted.time ? ` às *${extracted.time}*` : "";
+  const contactFirstName = found.name.split(" ")[0];
+  const senderName = userNickname || pushName || "seu contato";
   const contactMsg =
-    `👋 Olá, *${found.name}*!\n\n` +
-    `Sou a *${agentName}*, assistente virtual de *${userNickname || pushName}*.\n\n` +
+    `Olá, *${contactFirstName}*! 👋\n\n` +
+    `Aqui é a *${agentName}*, assistente virtual de *${senderName}*.\n\n` +
     `Ele(a) pediu para marcar uma reunião com você:\n\n` +
     `📅 *${dateLabel}*${timeLabel}` +
-    (meetLink ? `\n\n🔗 *Link da reunião:*\n${meetLink}` : "") +
-    `\n\nQualquer dúvida, entre em contato diretamente. 😊`;
+    (meetLink ? `\n🔗 *Link da reunião:*\n${meetLink}` : "") +
+    buildMayaCTA(senderName, userPhone);
 
   sendText(found.phone, contactMsg).catch(() => {});
 
