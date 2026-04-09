@@ -2774,6 +2774,17 @@ serve(async (req) => {
     return new Response("OK");
   }
 
+  // Marca messageId como em processamento logo após o check — impede double-fire
+  // do Evolution/Baileys que às vezes entrega o mesmo evento duas vezes.
+  if (messageId) {
+    const dedupePhone = remoteJid.replace(/@.*$/, "");
+    // Fire-and-await: garante que a segunda invocação já veja o ID gravado
+    await supabase.from("whatsapp_sessions").upsert(
+      { phone_number: dedupePhone, last_processed_id: messageId, last_activity: new Date().toISOString() },
+      { onConflict: "phone_number" }
+    );
+  }
+
   // ── Rate Limiting ────────────────────────────────────────────────────────
   const phoneForLimit = remoteJid.replace(/@.*$/, "");
   const rateCheck = await checkRateLimit(phoneForLimit);
@@ -4004,26 +4015,59 @@ async function handleSendToContact(
   }
 
   // Extrai nome do contato — "pra/para/pro NomeProprio"
-  const nameMatch = text.match(/(?:pra|para|pro|ao?)\s+([A-ZÁÉÍÓÚÂÊÎÔÛÃÕÇ][a-záéíóúâêîôûãõç]+(?:\s+[A-ZÁÉÍÓÚÂÊÎÔÛÃÕÇ][a-záéíóúâêîôûãõç]+)*)/i);
-  if (!nameMatch) {
+  // SEM flag /i para que [A-ZÁÉÍÓÚ] só case maiúsculas → captura apenas tokens PascalCase
+  // Ex: "pro Miguel dizendo..." → captura "Miguel" e para antes de "dizendo" (minúscula)
+  const prefixMatch = /\b(?:pra|para|pro|ao?)\s+/i.exec(text);
+  if (!prefixMatch) {
     return "Não identifiquei para quem enviar. Tente: _Manda pra [Nome] dizendo [mensagem]_";
   }
-  const contactName = nameMatch[1];
+  const afterPrefix = text.slice(prefixMatch.index + prefixMatch[0].length);
+  // Coleta tokens que começam com maiúscula (nomes próprios) — para no primeiro minúsculo
+  const nameTokens: string[] = [];
+  const tokenRe = /^([A-ZÁÉÍÓÚÂÊÎÔÛÃÕÇ][a-záéíóúâêîôûãõç]+)\s*/;
+  let remaining = afterPrefix;
+  while (remaining.length > 0) {
+    const t = tokenRe.exec(remaining);
+    if (!t) break;
+    nameTokens.push(t[1]);
+    remaining = remaining.slice(t[0].length);
+  }
+  if (nameTokens.length === 0) {
+    return "Não identifiquei para quem enviar. Tente: _Manda pra [Nome] dizendo [mensagem]_";
+  }
+  const contactName = nameTokens.join(" ");
 
-  // Busca contato no banco — tenta nome completo, depois apenas primeiro nome
+  // ── Busca contato no banco ─────────────────────────────────────────────────
+  // Estratégia: nome completo primeiro → primeiro nome → lista para disambiguação
   let found: Record<string, unknown> | null = null;
+
+  // 1) Busca por nome completo extraído
   const { data: f1 } = await supabase
     .from("contacts").select("*").eq("user_id", userId)
     .ilike("name", `%${contactName}%`).limit(1).maybeSingle();
-  found = f1;
+  found = f1 ?? null;
 
   if (!found) {
-    // Fallback: só o primeiro token do nome extraído
-    const firstName = contactName.split(" ")[0];
-    const { data: f2 } = await supabase
+    // 2) Fallback: primeiro token (ex: "Miguel" de "Miguel Fernandes")
+    const firstName = nameTokens[0];
+    const { data: allFirstNameMatches } = await supabase
       .from("contacts").select("*").eq("user_id", userId)
-      .ilike("name", `${firstName}%`).limit(1).maybeSingle();
-    found = f2;
+      .ilike("name", `${firstName}%`).limit(5);
+
+    if (allFirstNameMatches && allFirstNameMatches.length === 1) {
+      // Apenas um resultado com esse primeiro nome → usa direto
+      found = allFirstNameMatches[0] as Record<string, unknown>;
+    } else if (allFirstNameMatches && allFirstNameMatches.length > 1) {
+      // Múltiplos contatos com o mesmo primeiro nome → pede para o usuário escolher
+      const lista = allFirstNameMatches
+        .map((c, i) => `*${i + 1}.* ${c.name}`)
+        .join("\n");
+      return (
+        `Encontrei ${allFirstNameMatches.length} contatos com o nome *${firstName}*:\n\n` +
+        `${lista}\n\n` +
+        `Para qual deles você quer enviar? Responda com o número ou o nome completo.`
+      );
+    }
   }
 
   if (!found) {
