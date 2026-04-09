@@ -19,6 +19,13 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
+  // Se já estiver logado (ex: abriu pelo ícone do PWA), vai direto pro dashboard
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      if (data.session) navigate("/dashboard", { replace: true });
+    });
+  }, [navigate]);
+
   useEffect(() => {
     const saved = localStorage.getItem("maya_remember_email");
     if (saved) {
