@@ -1139,13 +1139,14 @@ async function handleAgendaCreate(
       "button:advance_30min": 30,
       "button:advance_1h":    60,
       "button:advance_confirm_no": 0,   // "Só na hora"
+      "1": 15, "2": 30, "3": 60,        // fallback para texto numerado (Baileys)
     };
     if (agendaButtonMap[msgLowRem] !== undefined) {
       const mins = agendaButtonMap[msgLowRem];
       const finalDataBtn = { ...partial, reminder_minutes: mins } as unknown as ExtractedEvent;
       return await createEventAndConfirm(userId, phone, finalDataBtn, recurrenceFromCtx, language, userNickname, userTz);
     }
-    if (msgLowRem === "button:advance_confirm_yes" || isReminderAccept(message)) {
+    if (msgLowRem === "button:advance_confirm_yes" || msgLowRem === "1" || isReminderAccept(message)) {
       // Aceitou — envia botões de tempo
       sendButtons(
         phone,
@@ -1204,6 +1205,7 @@ async function handleAgendaCreate(
       "button:advance_30min": 30,
       "button:advance_1h":    60,
       "button:advance_2h":    120,
+      "1": 15, "2": 30, "3": 60,   // fallback para texto numerado (Baileys)
     };
     const btnMin = buttonMinMap[msgLowMin];
     if (btnMin !== undefined) {
@@ -1911,11 +1913,12 @@ async function handleAgendaEdit(
     const fuBtnMap: Record<string, number | null> = {
       "button:advance_15min": 15, "button:advance_30min": 30,
       "button:advance_1h": 60,   "button:advance_confirm_no": 0,
+      "1": 15, "2": 30, "3": 60,  // fallback para texto numerado (Baileys)
     };
     if (fuBtnMap[msgLowFU] !== undefined) {
       return await finalizeEdit(userId, phone, ctx, fuBtnMap[msgLowFU], userTz);
     }
-    if (msgLowFU === "button:advance_confirm_yes" || isReminderAccept(message)) {
+    if (msgLowFU === "button:advance_confirm_yes" || msgLowFU === "1" || isReminderAccept(message)) {
       sendButtons(
         phone,
         "Com quanto tempo antes? ⏱️",
@@ -1965,6 +1968,7 @@ async function handleAgendaEdit(
     const fuMinMap: Record<string, number> = {
       "button:advance_15min": 15, "button:advance_30min": 30,
       "button:advance_1h": 60,   "button:advance_2h": 120,
+      "1": 15, "2": 30, "3": 60,  // fallback para texto numerado (Baileys)
     };
     const btnMinFU = fuMinMap[msgLowMinFU];
     if (btnMinFU !== undefined) return await finalizeEdit(userId, phone, ctx, btnMinFU, userTz);
@@ -3198,7 +3202,9 @@ async function handleReminderSet(
 
     const wantsAdvance =
       msgLow === "button:advance_confirm_yes" ||
+      msgLow === "1" ||
       /^(sim|quero|pode|s|yes|claro|ok|confirma|obrigad)/.test(msgLow);
+    // Note: "2" ("Só na hora") falls through naturally to saveReminder(0) below
 
     if (wantsAdvance) {
       // Envia botões de opções de tempo (fire-and-forget)
@@ -3236,6 +3242,7 @@ async function handleReminderSet(
       "button:advance_30min": 30,
       "button:advance_1h":    60,
       "button:advance_2h":    120,
+      "1": 15, "2": 30, "3": 60,   // fallback para texto numerado (Baileys)
     };
     if (buttonAdvanceMap[msgLow] !== undefined) {
       const advMin = buttonAdvanceMap[msgLow];
