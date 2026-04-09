@@ -2937,6 +2937,24 @@ serve(async (req) => {
     return new Response("OK");
   }
 
+  // ─── Detecção de contato enviado como texto (Nome + número) ──────────────
+  // Ex: "João Silva\n11 99999-9999" ou "Cibele: 11988887777"
+  // Só dispara se a mensagem for curta (não é chat normal) e tiver nome + número
+  if (!isForwarded && text.trim().length < 120) {
+    const hasPhone = /\b\d[\d\s\-().]{7,}\d\b/.test(text);
+    const hasName = /[A-ZÁÉÍÓÚÂÊÎÔÛÃÕÇ][a-záéíóúâêîôûãõç]{2,}/.test(text);
+    const looksLikeContact = hasPhone && hasName &&
+      !/\b(gasto|receita|pix|transferencia|reais|r\$|\d+:\d+|hoje|amanha|agenda|lembrete|tarefa)\b/i.test(text);
+
+    if (looksLikeContact) {
+      // Trata como contact_save — redireciona para processMessage que tem o handler
+      const debugResult = await processMessage(replyTo, `salva o contato ${text.trim()}`, lid, messageId, pushName);
+      return new Response(JSON.stringify({ ok: true, auto_contact: true, debug: debugResult }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+  }
+
   // ─── Modo Sombra: texto encaminhado ──────────────────────────────────────
   if (isForwarded && text.trim()) {
     // Se usuario encaminhou + digitou algo que classifyIntent reconhece → usa fluxo normal
@@ -3824,7 +3842,7 @@ async function handleDocumentMessage(
 
 /**
  * Processa contactMessage/contactsArrayMessage recebido via WhatsApp.
- * Faz parse do vCard, salva na tabela contacts (upsert) e confirma ao usuário.
+ * Extrai nome + telefone do vCard e pede confirmação via botões antes de salvar.
  */
 async function handleContactMessage(
   contactData: Record<string, unknown>,
@@ -3833,84 +3851,97 @@ async function handleContactMessage(
 ): Promise<string[]> {
   const log: string[] = [];
 
-  // Resolve user profile pelo LID/phone
+  // ── Resolve perfil do usuário ───────────────────────────────────────────
   const { profile, sendPhone } = await resolveProfileForShadow(replyTo, lid);
-  console.log("[handleContactMessage] replyTo:", replyTo, "| lid:", lid, "| profile found:", !!profile);
+  const dest = sendPhone || replyTo;
+  console.log("[handleContactMessage] replyTo:", replyTo, "| lid:", lid, "| profile:", !!profile, "| dest:", dest);
+
   if (!profile) {
-    log.push("profile not found");
-    await sendText(replyTo, "⚠️ Não encontrei sua conta. Certifique-se de que seu número está cadastrado no painel.");
+    log.push("profile_not_found");
+    // Não envia erro — usuário não cadastrado, ignora silenciosamente
     return log;
   }
 
-  // Suporta contactMessage (único), contactsArrayMessage (múltiplos)
-  // e também o formato onde os contatos vêm em contactData.contacts[] ou diretamente
-  let contacts: Array<Record<string, unknown>>;
+  // ── Extrai lista de contatos do payload (vários formatos possíveis) ──────
+  let rawList: Array<Record<string, unknown>> = [];
+
   if (Array.isArray(contactData.contacts)) {
-    contacts = contactData.contacts as Array<Record<string, unknown>>;
+    rawList = contactData.contacts as Array<Record<string, unknown>>;
   } else if (contactData.displayName || contactData.vcard) {
-    contacts = [contactData];
+    rawList = [contactData];
   } else {
-    // Tenta encontrar o payload correto em subchaves
-    const sub = (contactData.contactMessage ?? contactData.message) as Record<string, unknown> | undefined;
-    contacts = sub ? [sub] : [contactData];
+    // Tenta subchaves (evolutionAPI aninha de formas diferentes)
+    const sub = (
+      contactData.contactMessage ??
+      contactData.message ??
+      contactData
+    ) as Record<string, unknown>;
+    rawList = [sub];
   }
 
-  console.log("[handleContactMessage] contacts count:", contacts.length, "| first keys:", Object.keys(contacts[0] ?? {}));
+  console.log("[handleContactMessage] rawList count:", rawList.length, "| keys[0]:", Object.keys(rawList[0] ?? {}));
 
-  const saved: string[] = [];
+  // ── Parseia cada contato e monta lista com nome + telefone ───────────────
+  type ParsedContact = { name: string; phone: string };
+  const parsed: ParsedContact[] = [];
 
-  for (const c of contacts) {
-    const displayName = String(c.displayName ?? c.fullName ?? c.name ?? "").trim();
+  for (const c of rawList) {
+    const name = String(c.displayName ?? c.fullName ?? c.name ?? "").trim();
     const vcard = String(c.vcard ?? "");
 
-    console.log("[handleContactMessage] processing:", displayName, "| vcard length:", vcard.length);
-
-    if (!displayName && !vcard) continue;
-
-    // Extrair telefone: primeiro tenta waid= (mais confiável), depois TEL
+    // Extrai telefone: waid= é mais confiável, fallback TEL:, fallback campo phone
     let phone = "";
     const waidMatch = vcard.match(/waid=(\d+)/i);
     if (waidMatch) {
       phone = waidMatch[1];
     } else {
-      const telMatch = vcard.match(/TEL[^:\n]*:([+\d\s\-().]+)/i);
+      const telMatch = vcard.match(/TEL[^:\n]*:\s*([+\d\s\-().]+)/i);
       if (telMatch) phone = telMatch[1].replace(/\D/g, "");
     }
-
-    // Se ainda sem telefone, tenta extrair número do próprio displayName ou campo phone
     if (!phone && c.phone) phone = String(c.phone).replace(/\D/g, "");
 
-    if (!phone) {
-      log.push(`Skipped ${displayName || "?"}: no phone found`);
-      continue;
-    }
+    if (!phone) { log.push(`skip_no_phone: ${name || "?"}`); continue; }
 
-    const nameToSave = displayName || `Contato ${phone.slice(-4)}`;
-
-    // Garante código do Brasil se número local
+    // Normaliza para código Brasil
     if (!phone.startsWith("55") && phone.length <= 11) phone = `55${phone}`;
 
-    const { error } = await supabase.from("contacts").upsert(
-      { user_id: profile.id, name: nameToSave, phone, source: "whatsapp" },
-      { onConflict: "user_id,phone" }
-    );
-
-    if (error) {
-      log.push(`Error saving ${nameToSave}: ${error.message}`);
-    } else {
-      saved.push(nameToSave);
-      log.push(`Saved contact: ${nameToSave} (${phone})`);
-    }
+    const nameToUse = name || `Contato ${phone.slice(-4)}`;
+    parsed.push({ name: nameToUse, phone });
   }
 
-  if (saved.length > 0) {
-    const names = saved.join(", ");
-    const plural = saved.length > 1;
-    const firstName = saved[0].split(" ")[0];
-    await sendText(
-      replyTo,
-      `📇 Contato${plural ? "s" : ""} salvo${plural ? "s" : ""}: *${names}*\n\nAgora você pode pedir:\n• _"Marca reunião com ${firstName} amanhã às 14h"_\n• _"Manda mensagem pra ${firstName} dizendo..."_`
+  console.log("[handleContactMessage] parsed contacts:", parsed.map(p => `${p.name}(${p.phone})`));
+
+  if (parsed.length === 0) {
+    log.push("no_contacts_parsed");
+    await sendText(dest, "📇 Recebi um contato mas não consegui extrair o número. Tente compartilhar novamente.");
+    return log;
+  }
+
+  // ── Para cada contato, pede confirmação com botão ───────────────────────
+  const sessionId = profile.phone_number?.replace(/\D/g, "") || dest.replace(/\D/g, "");
+
+  for (const p of parsed) {
+    const phoneDisplay = phoneForDisplay(p.phone);
+    await sendButtons(
+      dest,
+      "📇 Novo contato detectado!",
+      `*${p.name}*\n📱 ${phoneDisplay}\n\nSalvar nos seus contatos?`,
+      [
+        { id: `CONTACT_SAVE_YES|${p.name}|${p.phone}`, text: "💾 Salvar" },
+        { id: "CONTACT_SAVE_NO",                        text: "❌ Ignorar" },
+      ]
     );
+
+    // Armazena na sessão para confirmar
+    await supabase.from("whatsapp_sessions").upsert({
+      user_id: profile.id,
+      phone_number: sessionId,
+      pending_action: "contact_save_confirm",
+      pending_context: { name: p.name, phone: p.phone },
+      last_activity: new Date().toISOString(),
+    }, { onConflict: "phone_number" });
+
+    log.push(`prompted_save: ${p.name} (${p.phone})`);
   }
 
   return log;
@@ -3973,17 +4004,28 @@ async function handleSendToContact(
   }
   const contactName = nameMatch[1];
 
-  // Busca contato no banco
-  const { data: found } = await supabase
-    .from("contacts")
-    .select("*")
-    .eq("user_id", userId)
-    .ilike("name", `%${contactName}%`)
-    .limit(1)
-    .maybeSingle();
+  // Busca contato no banco — tenta nome completo, depois apenas primeiro nome
+  let found: Record<string, unknown> | null = null;
+  const { data: f1 } = await supabase
+    .from("contacts").select("*").eq("user_id", userId)
+    .ilike("name", `%${contactName}%`).limit(1).maybeSingle();
+  found = f1;
 
   if (!found) {
-    return `Não encontrei *${contactName}* nos seus contatos. Compartilhe o contato comigo no WhatsApp primeiro! 📇`;
+    // Fallback: só o primeiro token do nome extraído
+    const firstName = contactName.split(" ")[0];
+    const { data: f2 } = await supabase
+      .from("contacts").select("*").eq("user_id", userId)
+      .ilike("name", `${firstName}%`).limit(1).maybeSingle();
+    found = f2;
+  }
+
+  if (!found) {
+    // Lista os contatos disponíveis para ajudar o usuário
+    const { data: allContacts } = await supabase
+      .from("contacts").select("name").eq("user_id", userId).limit(10);
+    const lista = allContacts?.map(c => `• ${c.name}`).join("\n") || "_Nenhum contato salvo_";
+    return `Não encontrei *${contactName}* nos seus contatos.\n\n*Seus contatos:*\n${lista}\n\nPara adicionar: compartilhe o contato ou diga _"Salva o contato [Nome]: [número]"_ 📇`;
   }
 
   // Extrai conteúdo da mensagem: tudo após "dizendo", "dizer", "falando", "que", ":"
@@ -4912,23 +4954,71 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
 
     } else if (intent === "contact_save") {
       // Salvar contato digitado: "salva o contato João 11999999999"
-      const nameMatchCS = text.match(/(?:contato|numero|telefone)\s+(?:d[oa]\s+)?([A-ZÁÉÍÓÚÂÊÎÔÛÃÕÇ][a-záéíóúâêîôûãõç]+(?:\s+[A-ZÁÉÍÓÚÂÊÎÔÛÃÕÇ][a-záéíóúâêîôûãõç]+)*)|(?:salva|adiciona)\s+(?:o\s+)?([A-ZÁÉÍÓÚÂÊÎÔÛÃÕÇ][a-záéíóúâêîôûãõç]+)/i);
+      // Extrai nome
+      const nameMatchCS = text.match(
+        /(?:contato|numero|telefone)\s+(?:d[oa]\s+)?([A-ZÁÉÍÓÚÂÊÎÔÛÃÕÇ][a-záéíóúâêîôûãõç]+(?:\s+[A-ZÁÉÍÓÚÂÊÎÔÛÃÕÇ][a-záéíóúâêîôûãõç]+)*)|(?:salva|adiciona)\s+(?:o\s+)?([A-ZÁÉÍÓÚÂÊÎÔÛÃÕÇ][a-záéíóúâêîôûãõç]+)/i
+      );
       const nameCS = (nameMatchCS?.[1] ?? nameMatchCS?.[2] ?? "").trim();
-      const phoneMatchCS = text.match(/\b(\d[\d\s\-().]{7,})\b/);
+      // Extrai telefone — qualquer sequência de dígitos com 8+ dígitos
+      const phoneMatchCS = text.match(/\b(\d[\d\s\-().]{7,}\d)\b/);
       let phoneCS = phoneMatchCS ? phoneMatchCS[1].replace(/\D/g, "") : "";
       if (phoneCS && !phoneCS.startsWith("55") && phoneCS.length <= 11) phoneCS = `55${phoneCS}`;
 
       if (!nameCS || !phoneCS) {
-        responseText = `Para salvar um contato, me diga o nome e o número:\n_"Salva o contato João: 11 99999-9999"_\n\nOu compartilhe o contato direto do WhatsApp! 📇`;
+        responseText = `Para salvar um contato, me diga o nome e o número:\n_"Salva o contato João: 11 99999-9999"_\n\nOu compartilhe o contato direto da agenda do WhatsApp! 📇`;
       } else {
+        const phoneDisplayCS = phoneForDisplay(phoneCS);
+        const sessionId = profile.phone_number?.replace(/\D/g, "") || (sendPhone || replyTo).replace(/\D/g, "");
+        await sendButtons(
+          sendPhone || replyTo,
+          "📇 Salvar contato?",
+          `*${nameCS}*\n📱 ${phoneDisplayCS}\n\nConfirma salvar nos seus contatos?`,
+          [
+            { id: `CONTACT_SAVE_YES|${nameCS}|${phoneCS}`, text: "💾 Salvar" },
+            { id: "CONTACT_SAVE_NO",                        text: "❌ Não" },
+          ]
+        );
+        await supabase.from("whatsapp_sessions").upsert({
+          user_id: profile.id, phone_number: sessionId,
+          pending_action: "contact_save_confirm",
+          pending_context: { name: nameCS, phone: phoneCS },
+          last_activity: new Date().toISOString(),
+        }, { onConflict: "phone_number" });
+        responseText = ""; // botão já enviado
+      }
+
+    } else if (intent === "contact_save_confirm") {
+      // Usuário clicou em "💾 Salvar" ou "❌ Ignorar" após detectar contato
+      const ctx = (session?.pending_context ?? {}) as Record<string, unknown>;
+
+      // Extrai nome e phone do botão (formato "CONTACT_SAVE_YES|Nome|phone")
+      // ou do pending_context como fallback
+      let csName = (ctx.name as string) || "";
+      let csPhone = (ctx.phone as string) || "";
+      const btnParts = text.replace("BUTTON:", "").split("|");
+      if (btnParts[0] === "CONTACT_SAVE_YES" && btnParts[1]) {
+        csName = btnParts[1];
+        csPhone = btnParts[2] ?? csPhone;
+      }
+
+      const isYes =
+        text.startsWith("BUTTON:CONTACT_SAVE_YES") ||
+        /^(sim|salvar|salva|confirmar|ok|yes)\b/i.test(text);
+
+      if (isYes && csName && csPhone) {
         const { error } = await supabase.from("contacts").upsert(
-          { user_id: profile.id, name: nameCS, phone: phoneCS, source: "manual" },
+          { user_id: profile.id, name: csName, phone: csPhone, source: "whatsapp" },
           { onConflict: "user_id,phone" }
         );
+        const firstName = csName.split(" ")[0];
         responseText = error
-          ? `⚠️ Erro ao salvar contato. Tente novamente.`
-          : `📇 Contato salvo: *${nameCS}*\nAgora você pode pedir:\n• _"Manda mensagem pro ${nameCS.split(" ")[0]} dizendo..."_\n• _"Marca reunião com ${nameCS.split(" ")[0]} amanhã às 14h"_`;
+          ? `⚠️ Erro ao salvar. Tente de novo.`
+          : `✅ *${csName}* salvo nos seus contatos!\n\nAgora pode pedir:\n• _"Manda mensagem pro ${firstName} dizendo..."_\n• _"Marca reunião com ${firstName} amanhã às 14h"_`;
+      } else {
+        responseText = "Ok, contato não salvo. 👍";
       }
+      pendingAction = undefined;
+      pendingContext = undefined;
 
     } else if (intent === "send_to_contact") {
       responseText = await handleSendToContact(

@@ -34,6 +34,7 @@ export type Intent =
   | "send_to_contact"
   | "schedule_meeting"
   | "contact_save"
+  | "contact_save_confirm"
   | "ai_chat";
 
 export function classifyIntent(msg: string): Intent {
