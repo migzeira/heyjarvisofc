@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
-import logoEscrita from "@/assets/logo_escrita.png";
+import logoEscrita from "@/assets/logo_escrita.webp";
 
 export default function TermosDeUso() {
   return (

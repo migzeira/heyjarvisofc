@@ -9,7 +9,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
 import { Loader2, ArrowLeft, Eye, EyeOff } from "lucide-react";
-import logoEscrita from "@/assets/logo_escrita.png";
+import logoEscrita from "@/assets/logo_escrita.webp";
 
 export default function Login() {
   const [email, setEmail] = useState("");
