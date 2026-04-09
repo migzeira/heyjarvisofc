@@ -101,6 +101,23 @@ async function translateIfNeeded(text: string, lang: string): Promise<string> {
   }
 }
 
+/** Enfileira mensagem para retry quando o Evolution API falha */
+async function queueMessage(phone: string, content: string, userId?: string): Promise<void> {
+  try {
+    await supabase.from("message_queue").insert({
+      user_id: userId ?? null,
+      phone,
+      message_type: "text",
+      content,
+      status: "pending",
+      next_attempt_at: new Date().toISOString(),
+    });
+    console.log(`[message_queue] Enqueued for ${phone}`);
+  } catch (err) {
+    console.error("[message_queue] Failed to queue:", err);
+  }
+}
+
 // ─────────────────────────────────────────────
 // MODULE GATE — mensagem quando módulo está off
 // ─────────────────────────────────────────────
@@ -4298,7 +4315,12 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       if (language !== "pt-BR") {
         responseText = await translateIfNeeded(responseText, language);
       }
-      await sendText(sendPhone || replyTo, responseText);
+      try {
+        await sendText(sendPhone || replyTo, responseText);
+      } catch (sendErr) {
+        console.error("[processMessage] sendText failed, queuing for retry:", sendErr);
+        await queueMessage(sendPhone || replyTo, responseText, profile.id);
+      }
     }
 
     // 8. Atualiza sessão

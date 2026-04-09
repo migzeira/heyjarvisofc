@@ -1,5 +1,8 @@
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { useAuth } from "@/hooks/useAuth";
+import { useRealtimeSync } from "@/hooks/useRealtimeSync";
+import { useRealtimeBadge } from "@/hooks/useRealtimeBadge";
+import { LiveBadge } from "@/components/LiveBadge";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -448,6 +451,13 @@ export default function Agenda() {
       loadGoogleEvents();
     }
   }, [user, loadData, loadGoogleEvents]);
+
+  const { triggerLive, isLive } = useRealtimeBadge();
+  useRealtimeSync(
+    ["events", "reminders"],
+    user?.id,
+    () => { loadData(); triggerLive(); }
+  );
 
   // ---------------------------------------------------------------------------
   // Navigation
@@ -1502,7 +1512,7 @@ export default function Agenda() {
       {/* Top bar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <h1 className="text-2xl font-bold">Agenda</h1>
+          <h1 className="text-2xl font-bold flex items-center gap-2">Agenda<LiveBadge isLive={isLive} className="ml-2" /></h1>
           {googleConnected ? (
             <Badge className="bg-success/20 text-success border-success/30 text-[10px] gap-1">
               <span>Google Calendar</span>

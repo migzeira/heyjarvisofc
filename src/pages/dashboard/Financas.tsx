@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
+import { useRealtimeSync } from "@/hooks/useRealtimeSync";
+import { useRealtimeBadge } from "@/hooks/useRealtimeBadge";
+import { LiveBadge } from "@/components/LiveBadge";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -94,6 +97,13 @@ export default function Financas() {
   });
 
   useEffect(() => { if (user) loadData(); }, [user]);
+
+  const { triggerLive, isLive } = useRealtimeBadge();
+  useRealtimeSync(
+    ["transactions", "budgets"],
+    user?.id,
+    () => { loadData(); triggerLive(); }
+  );
 
   const loadData = async () => {
     const [txRes, catRes, recRes, budRes] = await Promise.all([
@@ -350,6 +360,7 @@ export default function Financas() {
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <Wallet className="h-6 w-6 text-primary" /> Finanças
+            <LiveBadge isLive={isLive} className="ml-2" />
           </h1>
           <p className="text-sm text-muted-foreground mt-0.5">Controle completo dos seus gastos e receitas</p>
         </div>

@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
+import { useRealtimeSync } from "@/hooks/useRealtimeSync";
+import { useRealtimeBadge } from "@/hooks/useRealtimeBadge";
+import { LiveBadge } from "@/components/LiveBadge";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -116,6 +119,13 @@ export default function Lembretes() {
   const [editSaving, setEditSaving] = useState(false);
 
   useEffect(() => { if (user) load(); }, [user]);
+
+  const { triggerLive, isLive } = useRealtimeBadge();
+  useRealtimeSync(
+    ["reminders"],
+    user?.id,
+    () => { load(); triggerLive(); }
+  );
 
   const load = async () => {
     const { data } = await supabase
@@ -283,6 +293,7 @@ export default function Lembretes() {
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <Bell className="h-6 w-6 text-primary" /> Lembretes
+            <LiveBadge isLive={isLive} className="ml-2" />
           </h1>
           <p className="text-sm text-muted-foreground mt-0.5">
             A Maya te avisa no WhatsApp no horário certo — mesmo com o app fechado.

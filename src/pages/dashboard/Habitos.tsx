@@ -1,5 +1,8 @@
 import { useEffect, useState, useCallback } from "react";
 import { useAuth } from "@/hooks/useAuth";
+import { useRealtimeSync } from "@/hooks/useRealtimeSync";
+import { useRealtimeBadge } from "@/hooks/useRealtimeBadge";
+import { LiveBadge } from "@/components/LiveBadge";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -72,6 +75,13 @@ export default function Habitos() {
   }, [user]);
 
   useEffect(() => { if (user) loadData(); }, [user, loadData]);
+
+  const { triggerLive, isLive } = useRealtimeBadge();
+  useRealtimeSync(
+    ["habits", "habit_logs"],
+    user?.id,
+    () => { loadData(); triggerLive(); }
+  );
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -181,7 +191,7 @@ export default function Habitos() {
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Habitos</h1>
+        <h1 className="text-2xl font-bold flex items-center gap-2">Habitos<LiveBadge isLive={isLive} className="ml-2" /></h1>
         <Button onClick={openCreate}><Plus className="mr-2 h-4 w-4" /> Novo habito</Button>
       </div>
 
