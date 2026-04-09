@@ -713,7 +713,8 @@ async function handleFinanceRecord(
     transaction_date: todayBRT,
   }));
 
-  const { error } = await supabase.from("transactions").insert(inserts);
+  const { error, data: insertedRows } = await supabase.from("transactions").insert(inserts).select("id, user_id, transaction_date");
+  console.log(`[finance_record] userId=${userId} todayBRT=${todayBRT} inserted=${JSON.stringify(insertedRows)} error=${JSON.stringify(error)}`);
   if (error) throw error;
 
   // Sync Google Sheets (fire-and-forget, sem bloquear resposta)
@@ -861,6 +862,8 @@ async function handleFinanceReport(
   }
 
   const { data: transactions, error } = await query;
+
+  console.log(`[finance_report] userId=${userId} startDate=${startDate} endDate=${endDate} filterCat=${filterCategory} rows=${transactions?.length ?? "ERR"} error=${JSON.stringify(error)}`);
 
   if (error) throw error;
 
