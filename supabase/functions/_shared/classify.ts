@@ -106,10 +106,13 @@ export function classifyIntent(msg: string): Intent {
   )
     return "contact_save";
 
-  // Agendar reunião/meeting com um contato salvo (com Google Meet)
-  // "marca reunião com Fulano" / "agenda call com X amanhã às 14h"
+  // Agendar reunião com Google Meet E enviar link para o contato
+  // Só dispara quando o usuário explicitamente pede pra mandar/notificar o contato
+  // Ex: "marca reunião com Guilherme e manda o link pra ele"
+  //     "agenda call com João e avisa ele" / "cria meet com Maria e envia o convite"
   if (
-    /\b(marca(r)?|agenda(r)?|cria(r)?|marcar)\s+(uma?\s+)?(reuniao|meeting|call|chamada|videochamada|videoconferencia|conferencia)\s+(com|pra|para)\s+\w/i.test(m)
+    /\b(marca(r)?|agenda(r)?|cria(r)?|marcar)\s+(uma?\s+)?(reuniao|meeting|call|chamada|videochamada|videoconferencia|conferencia)\s+(com|pra|para)\s+\w/i.test(m) &&
+    /\b(manda(r)?|envia(r)?|avisa(r)?|notifica(r)?|compartilha(r)?)\s+(o\s+)?(link|convite|invite|meet|reuniao)\b|\b(e\s+)?(manda|envia|avisa)\s+(pra|para|ele|ela)\b/i.test(m)
   )
     return "schedule_meeting";
 
