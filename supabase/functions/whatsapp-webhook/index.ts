@@ -3939,8 +3939,8 @@ async function handleSendToContact(
     delayMs = unit.startsWith("min") ? num * 60_000 : num * 3_600_000;
   }
 
-  // Extrai nome do contato — "pra/para NomeProprio"
-  const nameMatch = text.match(/(?:pra|para|ao?)\s+([A-ZÁÉÍÓÚÂÊÎÔÛÃÕÇ][a-záéíóúâêîôûãõç]+(?:\s+[A-ZÁÉÍÓÚÂÊÎÔÛÃÕÇ][a-záéíóúâêîôûãõç]+)*)/i);
+  // Extrai nome do contato — "pra/para/pro NomeProprio"
+  const nameMatch = text.match(/(?:pra|para|pro|ao?)\s+([A-ZÁÉÍÓÚÂÊÎÔÛÃÕÇ][a-záéíóúâêîôûãõç]+(?:\s+[A-ZÁÉÍÓÚÂÊÎÔÛÃÕÇ][a-záéíóúâêîôûãõç]+)*)/i);
   if (!nameMatch) {
     return "Não identifiquei para quem enviar. Tente: _Manda pra [Nome] dizendo [mensagem]_";
   }

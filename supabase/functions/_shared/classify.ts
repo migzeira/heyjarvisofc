@@ -103,9 +103,10 @@ export function classifyIntent(msg: string): Intent {
     return "schedule_meeting";
 
   // Enviar mensagem para um contato salvo
-  // "manda mensagem pra Cibele dizendo X" / "fala pra João que..." / "daqui 30min manda pra X..."
+  // "manda mensagem pra Cibele dizendo X" / "manda uma mensagem pro João que..."
+  // "fala pra/pro X que..." / "daqui 30min manda pra X..."
   if (
-    /\b(manda(r)?|envia(r)?|fala(r)?|diz(er)?|avisa(r)?)\s+(mensagem\s+)?(pra|para|ao?)\s+[A-ZÁÉÍÓÚ]/i.test(m) &&
+    /\b(manda(r)?|envia(r)?|fala(r)?|diz(er)?|avisa(r)?)\s+(uma?\s+)?(mensagem\s+)?(pra|para|pro|ao?)\s+[A-ZÁÉÍÓÚ]/i.test(m) &&
     !/\b(lembrete|reminder|me avisa|me lembra)\b/i.test(m)
   )
     return "send_to_contact";
