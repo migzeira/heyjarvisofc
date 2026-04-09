@@ -7,7 +7,7 @@ import {
   ChevronDown, BarChart3, FileText, Table2, Zap, CalendarDays,
   Menu, X,
 } from "lucide-react";
-import logoEscrita from "@/assets/logo_escrita.png";
+import logoEscrita from "@/assets/logo_escrita.webp";
 import logoIcon from "@/assets/logo_icon.png";
 import googleAgendaImg from "@/assets/google_agenda.png";
 import googleSheetsImg from "@/assets/google_sheets.png";
