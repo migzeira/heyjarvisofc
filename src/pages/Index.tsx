@@ -410,6 +410,7 @@ function HeroPhone() {
    GIF PHONE MOCKUP — shell de celular com GIF como tela
 ───────────────────────────────────────────────────────────────────────────── */
 function GifPhone({ src, alt }: { src: string; alt: string }) {
+  const isVideo = src.endsWith(".webm") || src.endsWith(".mp4");
   return (
     <div className="relative w-[300px] select-none mx-auto">
       <div className="absolute -inset-10 -z-10 bg-violet-600/18 blur-3xl rounded-full hidden md:block" />
@@ -434,13 +435,25 @@ function GifPhone({ src, alt }: { src: string; alt: string }) {
             </p>
           </div>
         </div>
-        {/* GIF como tela do chat */}
-        <img
-          src={src}
-          alt={alt}
-          className="w-full object-cover"
-          style={{ display: "block", maxHeight: "380px" }}
-        />
+        {/* Conteúdo: video (WebM/MP4) ou gif */}
+        {isVideo ? (
+          <video
+            src={src}
+            autoPlay
+            loop
+            muted
+            playsInline
+            className="w-full object-cover"
+            style={{ display: "block", maxHeight: "380px" }}
+          />
+        ) : (
+          <img
+            src={src}
+            alt={alt}
+            className="w-full object-cover"
+            style={{ display: "block", maxHeight: "380px" }}
+          />
+        )}
         {/* input bar */}
         <div className="flex items-center gap-2 px-3 py-2.5 bg-[#0b0b12] border-t border-white/[0.06]">
           <div className="flex-1 bg-white/[0.05] rounded-full px-3 py-1.5 text-[10px] text-gray-600">Mande uma mensagem...</div>
@@ -831,7 +844,7 @@ export default function Index() {
           </div>
 
           <AnimateIn from="scale" delay={120}>
-            <GifPhone src="/gifs/gif-inicial.gif" alt="Maya no WhatsApp" />
+            <GifPhone src="/gifs/gif-inicial.mp4" alt="Maya no WhatsApp" />
           </AnimateIn>
         </div>
         <div className="absolute bottom-0 inset-x-0 h-24 bg-gradient-to-t from-[#03030a] to-transparent pointer-events-none" />
@@ -986,7 +999,7 @@ export default function Index() {
               </div>
             </AnimateIn>
             <AnimateIn from="right">
-              <GifPhone src="/gifs/gif-contatos.gif" alt="Maya processando mensagens" />
+              <GifPhone src="/gifs/gif-contatos.mp4" alt="Maya processando mensagens" />
             </AnimateIn>
           </div>
         </div>
@@ -1026,7 +1039,7 @@ export default function Index() {
             </div>
           </AnimateIn>
           <AnimateIn from="right">
-            <GifPhone src="/gifs/gif-reuniao.gif" alt="Maya gerenciando agenda" />
+            <GifPhone src="/gifs/gif-reuniao.mp4" alt="Maya gerenciando agenda" />
           </AnimateIn>
         </div>
       </Section>
