@@ -84,18 +84,19 @@ export async function syncGoogleCalendar(
   time: string | null,
   endTime?: string | null,
   description?: string | null,
-  location?: string | null
+  location?: string | null,
+  userTz: string = "America/Sao_Paulo"
 ): Promise<string | null> {
   const integration = await getIntegration(userId, "google_calendar");
   if (!integration) return null;
 
   const start = time
-    ? { dateTime: `${date}T${time}:00`, timeZone: "America/Sao_Paulo" }
+    ? { dateTime: `${date}T${time}:00`, timeZone: userTz }
     : { date };
   const end = endTime
-    ? { dateTime: `${date}T${endTime}:00`, timeZone: "America/Sao_Paulo" }
+    ? { dateTime: `${date}T${endTime}:00`, timeZone: userTz }
     : time
-      ? { dateTime: `${date}T${time}:00`, timeZone: "America/Sao_Paulo" }
+      ? { dateTime: `${date}T${time}:00`, timeZone: userTz }
       : { date };
 
   const body: Record<string, unknown> = { summary: title, start, end };
@@ -131,18 +132,19 @@ export async function updateGoogleCalendar(
   time: string | null,
   endTime?: string | null,
   description?: string | null,
-  location?: string | null
+  location?: string | null,
+  userTz: string = "America/Sao_Paulo"
 ): Promise<boolean> {
   const integration = await getIntegration(userId, "google_calendar");
   if (!integration) return false;
 
   const start = time
-    ? { dateTime: `${date}T${time}:00`, timeZone: "America/Sao_Paulo" }
+    ? { dateTime: `${date}T${time}:00`, timeZone: userTz }
     : { date };
   const end = endTime
-    ? { dateTime: `${date}T${endTime}:00`, timeZone: "America/Sao_Paulo" }
+    ? { dateTime: `${date}T${endTime}:00`, timeZone: userTz }
     : time
-      ? { dateTime: `${date}T${time}:00`, timeZone: "America/Sao_Paulo" }
+      ? { dateTime: `${date}T${time}:00`, timeZone: userTz }
       : { date };
 
   const body: Record<string, unknown> = { summary: title, start, end };
@@ -203,23 +205,24 @@ export async function createCalendarEventWithMeet(
   time: string | null,
   endTime?: string | null,
   description?: string | null,
-  attendeeEmail?: string | null
+  attendeeEmail?: string | null,
+  userTz: string = "America/Sao_Paulo"
 ): Promise<{ eventId: string | null; meetLink: string | null }> {
   const integration = await getIntegration(userId, "google_calendar");
   if (!integration) return { eventId: null, meetLink: null };
 
   const start = time
-    ? { dateTime: `${date}T${time}:00`, timeZone: "America/Sao_Paulo" }
+    ? { dateTime: `${date}T${time}:00`, timeZone: userTz }
     : { date };
 
   // End: explicit endTime → use it; time but no endTime → default +1h; all-day → next day
   let end: Record<string, string>;
   if (endTime) {
-    end = { dateTime: `${date}T${endTime}:00`, timeZone: "America/Sao_Paulo" };
+    end = { dateTime: `${date}T${endTime}:00`, timeZone: userTz };
   } else if (time) {
     const [h, m] = time.split(":").map(Number);
     const endH = String((h + 1) % 24).padStart(2, "0");
-    end = { dateTime: `${date}T${endH}:${String(m ?? 0).padStart(2, "0")}:00`, timeZone: "America/Sao_Paulo" };
+    end = { dateTime: `${date}T${endH}:${String(m ?? 0).padStart(2, "0")}:00`, timeZone: userTz };
   } else {
     const d = new Date(`${date}T00:00:00Z`);
     d.setUTCDate(d.getUTCDate() + 1);

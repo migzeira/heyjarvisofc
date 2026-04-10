@@ -798,8 +798,9 @@ Pedido: "${message}"`;
         if (todayVersion.getTime() > now.getTime() + 60000) {
           // Usa o mesmo offset que o nowIso tem
           const tzOffset = offsetMatch ? offsetMatch[1] : "-03:00";
-          const y = todayVersion.toLocaleString("sv-SE", { timeZone: "America/Sao_Paulo" }).slice(0, 10);
-          const t = todayVersion.toLocaleString("sv-SE", { timeZone: "America/Sao_Paulo" }).slice(11, 19);
+          // userTz vem do parâmetro da função analyzeForwardedContent (default São Paulo)
+          const y = todayVersion.toLocaleString("sv-SE", { timeZone: userTz }).slice(0, 10);
+          const t = todayVersion.toLocaleString("sv-SE", { timeZone: userTz }).slice(11, 19);
           parsed.remind_at = `${y}T${t}${tzOffset}`;
         }
       }

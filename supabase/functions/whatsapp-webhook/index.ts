@@ -736,7 +736,8 @@ async function handleFinanceRecord(
   userId: string,
   phone: string,
   message: string,
-  config: Record<string, unknown> | null
+  config: Record<string, unknown> | null,
+  userTz = "America/Sao_Paulo"
 ): Promise<string> {
   // Busca categorias do usuário (default + custom criadas via app)
   // pra que a Maya reconheça categorias personalizadas como "Pet", "Criptomoedas" etc
@@ -754,8 +755,8 @@ async function handleFinanceRecord(
     return "Não consegui identificar os valores. Pode repetir? Ex: *gastei 200 reais de gasolina*";
   }
 
-  // Usa data de Brasília para garantir que "hoje" na query bata com o registro
-  const todayBRT = new Date().toLocaleDateString("sv-SE", { timeZone: "America/Sao_Paulo" });
+  // "Hoje" no fuso do usuário (usa profile.timezone — default São Paulo como fallback)
+  const todayUserTz = new Date().toLocaleDateString("sv-SE", { timeZone: userTz });
 
   const inserts = transactions.map((t) => ({
     user_id: userId,
@@ -764,18 +765,17 @@ async function handleFinanceRecord(
     type: t.type,
     category: t.category,
     source: "whatsapp",
-    transaction_date: todayBRT,
+    transaction_date: todayUserTz,
   }));
 
   const { error, data: insertedRows } = await supabase.from("transactions").insert(inserts).select("id, user_id, transaction_date");
-  console.log(`[finance_record] userId=${userId} todayBRT=${todayBRT} inserted=${JSON.stringify(insertedRows)} error=${JSON.stringify(error)}`);
+  console.log(`[finance_record] userId=${userId} todayUserTz=${todayUserTz} tz=${userTz} inserted=${JSON.stringify(insertedRows)} error=${JSON.stringify(error)}`);
   if (error) throw error;
 
-  // Sync Google Sheets (fire-and-forget, sem bloquear resposta)
-  const today = new Date().toISOString().split("T")[0];
+  // Sync Google Sheets (fire-and-forget, sem bloquear resposta) — mesma data do registro
   for (const t of transactions) {
     syncGoogleSheets(userId, {
-      date: today,
+      date: todayUserTz,
       description: t.description,
       amount: t.amount,
       type: t.type,
@@ -1836,8 +1836,8 @@ async function createEventAndConfirm(
 
   if (error) throw error;
 
-  // Sync Google Calendar (fire-and-forget)
-  syncGoogleCalendar(userId, extracted.title, extracted.date, extracted.time).catch(() => {});
+  // Sync Google Calendar (fire-and-forget) — passa userTz pra não forçar BRT
+  syncGoogleCalendar(userId, extracted.title, extracted.date, extracted.time, extracted.end_time ?? null, null, extracted.location ?? null, userTz).catch(() => {});
 
   // Cria lembrete se solicitado (reminder_minutes >= 0 significa lembrete ativo)
   if (extracted.reminder_minutes != null && extracted.time) {
@@ -2178,10 +2178,10 @@ async function applyEventUpdate(
     }
   }
 
-  // 4. Sync Google Calendar (fire-and-forget)
+  // 4. Sync Google Calendar (fire-and-forget) — passa userTz pra não forçar BRT
   const gcalDate = updates.event_date ?? originalData.event_date;
   const gcalTime = updates.event_time ?? originalData.event_time;
-  syncGoogleCalendar(userId, originalData.title, gcalDate, gcalTime ?? null).catch(() => {});
+  syncGoogleCalendar(userId, originalData.title, gcalDate, gcalTime ?? null, updates.end_time ?? null, null, null, userTz).catch(() => {});
 
   // 5. Formata confirmação
   const dateStr = new Date(gcalDate + "T12:00:00").toLocaleDateString("pt-BR", {
@@ -4594,9 +4594,9 @@ async function handleScheduleMeeting(
   const title = `Reunião com ${found.name}`;
   const description = `Reunião agendada pela ${agentName} — assistente de ${userNickname || pushName}`;
 
-  // Cria evento no Google Calendar com Google Meet
+  // Cria evento no Google Calendar com Google Meet — passa userTz
   const { eventId, meetLink } = await createCalendarEventWithMeet(
-    userId, title, extracted.date, extracted.time ?? null, null, description
+    userId, title, extracted.date, extracted.time ?? null, null, description, null, userTz
   );
 
   // Salva na tabela events
@@ -5434,7 +5434,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
     } else if (intent === "habit_checkin") {
       responseText = await handleHabitCheckin(profile.id, text, userTz);
     } else if (intent === "finance_record") {
-      responseText = await handleFinanceRecord(profile.id, sendPhone || replyTo, text, config);
+      responseText = await handleFinanceRecord(profile.id, sendPhone || replyTo, text, config, userTz);
     } else if (intent === "category_list") {
       responseText = await handleCategoryList(profile.id);
     } else if (intent === "finance_delete") {
@@ -5581,7 +5581,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
         const dateStr = ctx.date ? ` — ${ctx.date}` : "";
         const timeStr = ctx.time ? ` às ${ctx.time}` : "";
         responseText = `✅ Evento criado: *${ctx.title || "Evento encaminhado"}*${dateStr}${timeStr} [📨 encaminhado]`;
-        syncGoogleCalendar(profile.id, ctx.title as string, ctx.date as string, (ctx.time as string) ?? null).catch(() => {});
+        syncGoogleCalendar(profile.id, ctx.title as string, ctx.date as string, (ctx.time as string) ?? null, null, null, null, userTz).catch(() => {});
       } else {
         responseText = "Ok, ignorei o evento. 🗑️";
       }

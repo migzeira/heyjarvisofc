@@ -235,8 +235,13 @@ async function handleCancel(
     subscription_cancelled_at: new Date().toISOString(), // marca o cancelamento
   } as any).eq("id", userId);
 
+  // Busca timezone do usuário pra exibir a data no fuso dele
+  const { data: tzProfile } = await supabase
+    .from("profiles").select("timezone").eq("id", userId).maybeSingle();
+  const userTz = (tzProfile?.timezone as string) || "America/Sao_Paulo";
+
   // Notifica no WhatsApp
-  const until = new Date(accessUntil).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" });
+  const until = new Date(accessUntil).toLocaleDateString("pt-BR", { timeZone: userTz });
   await notifyUser(userId,
     `⚠️ *Assinatura cancelada*\n\nSua assinatura da Maya foi cancelada.\n\nSeu acesso continua ativo até *${until}*. Após essa data o assistente será desativado automaticamente.\n\nSe quiser continuar usando, basta renovar sua assinatura no app.`
   );

@@ -54,6 +54,14 @@ serve(async (req) => {
       });
     }
 
+    // Busca timezone do usuário (para criar eventos no Google Calendar no fuso correto)
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("timezone")
+      .eq("id", user.id)
+      .maybeSingle();
+    const userTz = (profile?.timezone as string) || "America/Sao_Paulo";
+
     const body = await req.json();
     const { action, event, eventId } = body;
 
@@ -67,10 +75,12 @@ serve(async (req) => {
         event.end_time || null,
         event.description || null,
         event.location || null,
+        userTz,
       );
 
       if (googleEventId && eventId) {
-        // Salva google_event_id no evento local
+        // Salva google_event_id no evento local — garante idempotência:
+        // próxima tentativa de sync vai cair no ramo "update" em vez de criar duplicata
         await supabase
           .from("events")
           .update({ google_event_id: googleEventId })
@@ -94,6 +104,7 @@ serve(async (req) => {
         event.end_time || null,
         event.description || null,
         event.location || null,
+        userTz,
       );
 
       return new Response(JSON.stringify({ synced: ok }), {
