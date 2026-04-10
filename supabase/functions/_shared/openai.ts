@@ -340,14 +340,40 @@ export async function extractStatementFromImage(
     total_income: 0,
   };
 
-  // Normaliza mimetype — WhatsApp às vezes envia "image/webp" ou sem sufixo
-  const rawMime = (mimetype || "image/jpeg").toLowerCase();
+  // 1) Remove prefixo data URI se existir ("data:image/jpeg;base64,...")
+  let cleanB64 = base64;
+  const dataUriMatch = cleanB64.match(/^data:([^;]+);base64,(.+)$/);
+  let detectedMime = "";
+  if (dataUriMatch) {
+    detectedMime = dataUriMatch[1];
+    cleanB64 = dataUriMatch[2];
+  }
+
+  // 2) Detecta mimetype REAL pelos magic bytes do base64 (não confia no Evolution API)
+  //    JPEG: /9j/  |  PNG: iVBORw0KGgo  |  GIF: R0lGOD  |  WebP: UklGR
+  const firstBytes = cleanB64.slice(0, 20);
+  let sniffedMime = "";
+  if (firstBytes.startsWith("/9j/")) sniffedMime = "image/jpeg";
+  else if (firstBytes.startsWith("iVBORw0KGgo")) sniffedMime = "image/png";
+  else if (firstBytes.startsWith("R0lGOD")) sniffedMime = "image/gif";
+  else if (firstBytes.startsWith("UklGR")) sniffedMime = "image/webp";
+
+  // 3) Prioridade: magic bytes > data URI > mimetype passado > default jpeg
+  const rawMime = (sniffedMime || detectedMime || mimetype || "image/jpeg").toLowerCase();
   const mediaType = (
     rawMime.includes("png") ? "image/png" :
     rawMime.includes("webp") ? "image/webp" :
     rawMime.includes("gif") ? "image/gif" :
     "image/jpeg"
   ) as "image/jpeg" | "image/png" | "image/gif" | "image/webp";
+
+  // 4) Valida tamanho — Claude Vision aceita até ~5MB de base64 (~3.75MB binário)
+  const sizeBytes = Math.ceil(cleanB64.length * 0.75);
+  console.log(`[extractStatementFromImage] mime=${mediaType} sniffed=${sniffedMime} passed=${mimetype} sizeKB=${Math.round(sizeBytes / 1024)}`);
+  if (sizeBytes > 5 * 1024 * 1024) {
+    console.error(`[extractStatementFromImage] image too large: ${sizeBytes} bytes`);
+    return { ...fallback, document_type: "too_large" as "unknown" };
+  }
 
   const captionHint = caption
     ? `\n\nDica do usuário (legenda enviada junto com a imagem): "${caption}"`
@@ -369,7 +395,7 @@ export async function extractStatementFromImage(
         content: [
           {
             type: "image",
-            source: { type: "base64", media_type: mediaType, data: base64 },
+            source: { type: "base64", media_type: mediaType, data: cleanB64 },
           },
           {
             type: "text",

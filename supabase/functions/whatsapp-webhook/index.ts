@@ -4459,42 +4459,11 @@ async function processImageMessage(
   if (isForwarded) log.push("forwarded");
   if (caption) log.push(`caption: ${caption.slice(0, 60)}`);
   try {
-    // 1. Extract using smart statement analysis (passa caption como hint para o Vision)
-    const extraction = await extractStatementFromImage(base64, mimetype, caption);
-    log.push(`doc_type: ${extraction.document_type}, tx_count: ${extraction.transactions.length}`);
-
-    // 2. Normalize phone for profile lookup and session key
+    // 1. Normalize phone for profile lookup
     const phone = replyTo.replace(/@s\.whatsapp\.net$/, "").replace(/@lid$/, "").replace(/:\d+$/, "");
 
-    // 3. Unknown or no transactions
-    if (extraction.document_type === "unknown" || extraction.transactions.length === 0) {
-      log.push("not_a_financial_doc");
-      // Se encaminhada e nao financeira → salva como nota silenciosa
-      if (isForwarded) {
-        const { data: pf } = await supabase.from("profiles").select("id, phone_number")
-          .or(`phone_number.eq.${phone},phone_number.eq.+${phone}`).maybeSingle();
-        if (pf) {
-          await supabase.from("notes").insert({
-            user_id: pf.id, title: "Imagem encaminhada", content: "[Imagem recebida via encaminhamento — não identificada como documento financeiro]", source: "whatsapp_forward",
-          });
-          await sendText(pf.phone_number ?? replyTo, "📷 Recebi a imagem encaminhada — salvei como anotação. [📨 encaminhado]");
-        }
-        return log;
-      }
-      const { data: profileBasic } = await supabase
-        .from("profiles")
-        .select("phone_number")
-        .or(`phone_number.eq.${phone},phone_number.eq.+${phone}`)
-        .maybeSingle();
-      const sendPhone = profileBasic?.phone_number ?? replyTo;
-      await sendText(
-        sendPhone || replyTo,
-        "📷 Recebi a imagem! Não identifiquei um extrato ou nota fiscal.\n\nPosso registrar:\n• 📄 *Extrato bancário* — foto do app ou PDF\n• 💳 *Fatura do cartão* — com lista de compras\n• 🧾 *Nota fiscal / cupom*\n• 📱 *Comprovante* de PIX, TED ou boleto\n\nOu me diga por texto: _gastei R$50 de almoço_"
-      );
-      return log;
-    }
-
-    // 4. Resolve full profile (same multi-fallback pattern as processMessage)
+    // 2. Resolve full profile PRIMEIRO (antes de qualquer sendText!)
+    //    Padrão multi-fallback idêntico ao processMessage — inclui resolveLidToPhone
     let profile: { id: string; phone_number: string; account_status: string } | null = null;
 
     if (lid) {
@@ -4513,15 +4482,59 @@ async function processImageMessage(
         .maybeSingle();
       profile = data;
     }
+    // Fallback crítico: resolve LID → telefone real via Evolution API
+    // Sem isso, sendText falha com 400 quando o usuário manda imagem via LID
+    if (!profile && lid) {
+      const resolvedPhone = await resolveLidToPhone(lid);
+      if (resolvedPhone) {
+        const { data } = await supabase
+          .from("profiles")
+          .select("id, phone_number, account_status")
+          .or(`phone_number.eq.${resolvedPhone},phone_number.eq.+${resolvedPhone},phone_number.eq.55${resolvedPhone}`)
+          .maybeSingle();
+        if (data) {
+          profile = data;
+          supabase.from("profiles").update({ whatsapp_lid: lid }).eq("id", data.id).then(() => {}).catch(() => {});
+          log.push(`lid_auto_linked: ${lid} → ${resolvedPhone}`);
+        }
+      }
+    }
 
+    // Sem profile → silêncio total (não tenta sendText para LID inválido)
     if (!profile) {
-      log.push("unknown_number");
-      await sendText(replyTo, "Para processar seu extrato, vincule seu número no app Minha Maya primeiro.");
+      log.push("unknown_number_silent");
       return log;
     }
 
-    const sendPhone = profile.phone_number?.replace(/\D/g, "") ?? phone;
-    const sessionId = profile.phone_number?.replace(/\D/g, "") || phone;
+    // Determina o destino válido para TODAS as respostas
+    const rawPhone = profile.phone_number?.replace(/\D/g, "") ?? "";
+    const sendPhone = rawPhone || phone;
+    const sessionId = rawPhone || phone;
+
+    // 3. Extrai com Vision (com profile já resolvido)
+    const extraction = await extractStatementFromImage(base64, mimetype, caption);
+    log.push(`doc_type: ${extraction.document_type}, tx_count: ${extraction.transactions.length}`);
+
+    // 4. Unknown or no transactions
+    if (extraction.document_type === "unknown" || extraction.transactions.length === 0) {
+      log.push("not_a_financial_doc");
+      // Se encaminhada e nao financeira → salva como nota silenciosa
+      if (isForwarded) {
+        await supabase.from("notes").insert({
+          user_id: profile.id,
+          title: "Imagem encaminhada",
+          content: "[Imagem recebida via encaminhamento — não identificada como documento financeiro]",
+          source: "whatsapp_forward",
+        });
+        await sendText(sendPhone, "📷 Recebi a imagem encaminhada — salvei como anotação. [📨 encaminhado]");
+        return log;
+      }
+      await sendText(
+        sendPhone,
+        "📷 Recebi a imagem! Não identifiquei um extrato ou nota fiscal.\n\nPosso registrar:\n• 📄 *Extrato bancário* — foto do app ou PDF\n• 💳 *Fatura do cartão* — com lista de compras\n• 🧾 *Nota fiscal / cupom*\n• 📱 *Comprovante* de PIX, TED ou boleto\n\nOu me diga por texto: _gastei R$50 de almoço_"
+      );
+      return log;
+    }
 
     // 5. Single transaction (nota_fiscal or comprovante with 1 item) — save directly
     if (extraction.transactions.length === 1) {
@@ -4539,7 +4552,7 @@ async function processImageMessage(
       const dot = t.type === "expense" ? "🔴" : "🟢";
       const catEmoji = CATEGORY_EMOJI[t.category] ?? "📦";
       const confirmMsg = `✅ *${docTypeLabel(extraction.document_type)} registrado!*\n\n${dot} ${t.description}\n${catEmoji} Categoria: ${t.category}\n💵 Valor: R$ ${fmtBRL(t.amount)}\n\nSalvo com sucesso! 🎉`;
-      await sendText(sendPhone || replyTo, confirmMsg);
+      await sendText(sendPhone, confirmMsg);
       log.push("single_tx_saved");
       return log;
     }
@@ -4567,7 +4580,7 @@ async function processImageMessage(
       { onConflict: "phone_number" }
     );
 
-    await sendText(sendPhone || replyTo, preview);
+    await sendText(sendPhone, preview);
     log.push("preview_sent");
     return log;
 
