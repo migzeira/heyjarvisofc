@@ -409,47 +409,23 @@ function HeroPhone() {
 /* ─────────────────────────────────────────────────────────────────────────────
    GIF PHONE — exibe o GIF/vídeo diretamente (o próprio GIF já é o celular)
 
-   Problema: <img> dentro de <video> NÃO funciona como fallback em browsers
-   modernos — Safari/iOS suportam <video> mas não tocam WebM, ficando no estado
-   "sem fonte válida" = fundo branco. A solução correta é detectar suporte VP9
-   de forma SÍNCRONA antes do render e escolher o elemento adequado:
-
-   - canPlayType('video/webm; codecs="vp9"') !== "": Chrome, Firefox, Android
-     → usa <video src=".webm"> com VP9 + alpha
-   - caso contrário: Safari, iOS (qualquer versão), browsers sem VP9
-     → usa <img src=".webp"> com animated WebP + alpha (Safari 14+/iOS 14+)
+   Usa animated WebP com alpha para TODOS os browsers:
+   - Chrome 32+, Firefox 65+, Safari 14+/iOS 14+, Edge 18+ suportam WebP animado
+   - <img> com WebP é mais simples e universal que <video> com alpha
+   - VP9 alpha no <video> não é confiável no Safari/iOS mesmo em versões recentes
+   - Os .webp foram gerados com -pix_fmt yuva420p (alpha confirmado nos chunks VP8X+ALPH)
 ───────────────────────────────────────────────────────────────────────────── */
 function GifPhone({ src, alt }: { src: string; alt: string }) {
   const webpSrc = src.replace(/\.(webm|mp4)$/, ".webp");
-
-  // Detecção síncrona — canPlayType roda antes do primeiro render, sem flash
-  const supportsVP9 =
-    typeof document !== "undefined" &&
-    document.createElement("video").canPlayType('video/webm; codecs="vp9"') !== "";
-
   return (
     <div className="relative select-none mx-auto" style={{ maxWidth: "320px" }}>
       <div className="absolute -inset-10 -z-10 bg-violet-600/18 blur-3xl rounded-full hidden md:block" />
-      {supportsVP9 ? (
-        /* Desktop / Android Chrome / Firefox: WebM VP9 com alpha completo */
-        <video
-          src={src}
-          autoPlay
-          loop
-          muted
-          playsInline
-          className="w-full"
-          style={{ display: "block", background: "transparent" }}
-        />
-      ) : (
-        /* Safari / iOS: animated WebP com alpha — sem fundo branco */
-        <img
-          src={webpSrc}
-          alt={alt}
-          className="w-full"
-          style={{ display: "block" }}
-        />
-      )}
+      <img
+        src={webpSrc}
+        alt={alt}
+        className="w-full"
+        style={{ display: "block" }}
+      />
     </div>
   );
 }
