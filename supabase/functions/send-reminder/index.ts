@@ -163,10 +163,18 @@ function nextOccurrence(
   return null; // "none" ou tipo desconhecido → sem próxima
 }
 
-serve(async (_req) => {
+serve(async (req) => {
   // Função interna chamada apenas pelo pg_cron.
-  // A segurança é garantida por verify_jwt=false (gateway) + RLS no banco.
-  // Não usamos CRON_SECRET via Authorization para não conflitar com pg_net.
+  // Valida CRON_SECRET via header customizado x-cron-secret pra não conflitar
+  // com o Authorization usado pelo pg_net (que manda Bearer do service_role key).
+  // Se CRON_SECRET não estiver configurado, aceita qualquer chamada (dev mode).
+  const cronSecret = Deno.env.get("CRON_SECRET") ?? "";
+  if (cronSecret) {
+    const headerSecret = req.headers.get("x-cron-secret") ?? "";
+    if (headerSecret !== cronSecret) {
+      return new Response("Unauthorized", { status: 401 });
+    }
+  }
 
   const now = new Date();
 

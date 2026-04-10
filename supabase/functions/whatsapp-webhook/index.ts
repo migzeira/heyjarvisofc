@@ -50,6 +50,40 @@ function todayInTz(tz: string): string {
   return new Date().toLocaleDateString("sv-SE", { timeZone: tz });
 }
 
+/**
+ * Sanitiza texto pra uso seguro em PostgREST .or() e .ilike() filters.
+ * Remove caracteres que poderiam quebrar o parser do PostgREST:
+ *   - vírgulas (,)  → separador de filtros
+ *   - parênteses    → grupo de filtros
+ *   - ponto (.)     → separador coluna.operador
+ *   - asteriscos    → LIKE wildcards (só * que vira %)
+ *   - aspas         → injection clássico
+ *   - null bytes    → postgres quebra
+ * Mantém letras, números, espaço, acentos, hífen, underscore.
+ */
+function sanitizeForFilter(s: string): string {
+  if (!s) return "";
+  return String(s)
+    .replace(/[\x00]/g, "")         // null bytes
+    .replace(/[,.()"'*\\]/g, " ")   // caracteres que podem quebrar PostgREST
+    .replace(/\s+/g, " ")           // colapsa espaços
+    .trim()
+    .slice(0, 80);                  // limita tamanho pra não explodir query
+}
+
+/**
+ * Normaliza phone number pra uso seguro em .or() filters.
+ * Aceita somente dígitos. Retorna string vazia se input inválido.
+ * Previne injection e garante que o input seja sempre digits-only.
+ */
+function sanitizePhone(phone: string): string {
+  if (!phone) return "";
+  const digits = String(phone).replace(/\D/g, "");
+  // Phones válidos: 8-15 dígitos (E.164 permite até 15)
+  if (digits.length < 8 || digits.length > 15) return "";
+  return digits;
+}
+
 function langToLocale(lang: string): string {
   const map: Record<string, string> = { "pt-BR": "pt-BR", "en": "en-US", "es": "es-ES" };
   return map[lang] ?? "pt-BR";
@@ -1371,8 +1405,11 @@ async function handleNotesDelete(
     .limit(10);
 
   if (keyword && keyword.length >= 2) {
-    // Busca em title OU content
-    query = query.or(`title.ilike.%${keyword}%,content.ilike.%${keyword}%`);
+    // Busca em title OU content (sanitiza pra evitar PostgREST injection)
+    const safeKeyword = sanitizeForFilter(keyword);
+    if (safeKeyword) {
+      query = query.or(`title.ilike.%${safeKeyword}%,content.ilike.%${safeKeyword}%`);
+    }
   }
 
   const { data: notes, error } = await query;
@@ -2193,12 +2230,14 @@ async function handleAgendaLookup(
     .order("event_date", { ascending: true })
     .limit(3);
 
-  if (keyword && startDate && endDate) {
+  // Sanitiza keyword pra evitar PostgREST injection em .or()/.ilike()
+  const safeKeyword = keyword ? sanitizeForFilter(keyword) : "";
+  if (safeKeyword && startDate && endDate) {
     query = query.or(
-      `title.ilike.%${keyword}%,and(event_date.gte.${startDate},event_date.lte.${endDate})`
+      `title.ilike.%${safeKeyword}%,and(event_date.gte.${startDate},event_date.lte.${endDate})`
     );
-  } else if (keyword) {
-    query = query.ilike("title", `%${keyword}%`);
+  } else if (safeKeyword) {
+    query = query.ilike("title", `%${safeKeyword}%`);
   } else if (startDate && endDate) {
     query = query.gte("event_date", startDate).lte("event_date", endDate);
   }
@@ -4171,14 +4210,15 @@ async function resolveProfileForShadow(
   profile: { id: string; phone_number: string; timezone: string | null } | null;
   sendPhone: string;
 }> {
-  const phone = replyTo.replace(/@s\.whatsapp\.net$/, "").replace(/@lid$/, "").replace(/:\d+$/, "");
+  const rawPhone = replyTo.replace(/@s\.whatsapp\.net$/, "").replace(/@lid$/, "").replace(/:\d+$/, "");
+  const phone = sanitizePhone(rawPhone);
   let profile: { id: string; phone_number: string; timezone: string | null } | null = null;
 
   if (lid) {
     const { data } = await supabase.from("profiles").select("id, phone_number, timezone").eq("whatsapp_lid", lid).maybeSingle();
     profile = data;
   }
-  if (!profile) {
+  if (!profile && phone) {
     const { data } = await supabase.from("profiles").select("id, phone_number, timezone")
       .or(`phone_number.eq.${phone},phone_number.eq.+${phone}`).maybeSingle();
     profile = data;
@@ -4976,8 +5016,9 @@ async function processImageMessage(
   if (isForwarded) log.push("forwarded");
   if (caption) log.push(`caption: ${caption.slice(0, 60)}`);
   try {
-    // 1. Normalize phone for profile lookup
-    const phone = replyTo.replace(/@s\.whatsapp\.net$/, "").replace(/@lid$/, "").replace(/:\d+$/, "");
+    // 1. Normalize phone for profile lookup (sanitizado pra digits-only, prev\u00eam injection em .or())
+    const rawPhone = replyTo.replace(/@s\.whatsapp\.net$/, "").replace(/@lid$/, "").replace(/:\d+$/, "");
+    const phone = sanitizePhone(rawPhone);
 
     // 2. Resolve full profile PRIMEIRO (antes de qualquer sendText!)
     //    Padrão multi-fallback idêntico ao processMessage — inclui resolveLidToPhone
@@ -4991,7 +5032,7 @@ async function processImageMessage(
         .maybeSingle();
       profile = data;
     }
-    if (!profile) {
+    if (!profile && phone) {
       const { data } = await supabase
         .from("profiles")
         .select("id, phone_number, account_status")
@@ -5002,7 +5043,8 @@ async function processImageMessage(
     // Fallback crítico: resolve LID → telefone real via Evolution API
     // Sem isso, sendText falha com 400 quando o usuário manda imagem via LID
     if (!profile && lid) {
-      const resolvedPhone = await resolveLidToPhone(lid);
+      const resolvedRaw = await resolveLidToPhone(lid);
+      const resolvedPhone = sanitizePhone(resolvedRaw ?? "");
       if (resolvedPhone) {
         const { data } = await supabase
           .from("profiles")
@@ -5217,43 +5259,51 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
 
     if (!profile) {
       // Fallback: tenta por telefone (@s.whatsapp.net ou @lid → extrai dígitos)
-      const phone = replyTo
+      // Sanitizado pra digits-only, previne PostgREST injection em .or()
+      const rawPhone = replyTo
         .replace(/@s\.whatsapp\.net$/, "")
         .replace(/@lid$/, "")
         .replace(/:\d+$/, "");
-      const { data } = await supabase
-        .from("profiles")
-        .select("id, plan, messages_used, messages_limit, phone_number, account_status, timezone, access_until, display_name")
-        .or(`phone_number.eq.${phone},phone_number.eq.+${phone}`)
-        .maybeSingle();
-      profile = data;
+      const phone = sanitizePhone(rawPhone);
+      if (phone) {
+        const { data } = await supabase
+          .from("profiles")
+          .select("id, plan, messages_used, messages_limit, phone_number, account_status, timezone, access_until, display_name")
+          .or(`phone_number.eq.${phone},phone_number.eq.+${phone}`)
+          .maybeSingle();
+        profile = data;
+      }
     }
 
     // Fallback adicional: busca em user_phone_numbers (múltiplos números - plano business)
     if (!profile) {
-      const phone = replyTo
+      const rawPhone = replyTo
         .replace(/@s\.whatsapp\.net$/, "")
         .replace(/@lid$/, "")
         .replace(/:\d+$/, "");
-      const { data: extraNum } = await supabase
-        .from("user_phone_numbers")
-        .select("user_id")
-        .or(`phone_number.eq.${phone},phone_number.eq.+${phone}`)
-        .maybeSingle();
-      if (extraNum?.user_id) {
-        const { data } = await supabase
-          .from("profiles")
-          .select("id, plan, messages_used, messages_limit, phone_number, account_status, timezone, access_until, display_name")
-          .eq("id", extraNum.user_id)
+      const phone = sanitizePhone(rawPhone);
+      if (phone) {
+        const { data: extraNum } = await supabase
+          .from("user_phone_numbers")
+          .select("user_id")
+          .or(`phone_number.eq.${phone},phone_number.eq.+${phone}`)
           .maybeSingle();
-        profile = data;
+        if (extraNum?.user_id) {
+          const { data } = await supabase
+            .from("profiles")
+            .select("id, plan, messages_used, messages_limit, phone_number, account_status, timezone, access_until, display_name")
+            .eq("id", extraNum.user_id)
+            .maybeSingle();
+          profile = data;
+        }
       }
     }
 
     // Fallback por resolução de LID → telefone real via Evolution API
     // Útil quando o usuário tem WhatsApp Multi-Device e ainda não vinculou o LID
     if (!profile && lid) {
-      const resolvedPhone = await resolveLidToPhone(lid);
+      const resolvedRaw = await resolveLidToPhone(lid);
+      const resolvedPhone = sanitizePhone(resolvedRaw ?? "");
       if (resolvedPhone) {
         const { data } = await supabase
           .from("profiles")
@@ -6051,11 +6101,13 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
     });
     // Registra metrica de erro se temos profile (busca por phone_number, nao por id)
     try {
-      const errPhone = replyTo.replace(/@.*$/, "").replace(/:\d+$/, "");
-      const { data: pErr } = await supabase.from("profiles").select("id")
-        .or(`phone_number.eq.${errPhone},phone_number.eq.+${errPhone}`)
-        .maybeSingle();
-      if (pErr?.id) logMetric(pErr.id, currentIntent || "unknown", Date.now() - t0, false, message.slice(0, 100)).catch(() => {});
+      const errPhone = sanitizePhone(replyTo.replace(/@.*$/, "").replace(/:\d+$/, ""));
+      if (errPhone) {
+        const { data: pErr } = await supabase.from("profiles").select("id")
+          .or(`phone_number.eq.${errPhone},phone_number.eq.+${errPhone}`)
+          .maybeSingle();
+        if (pErr?.id) logMetric(pErr.id, currentIntent || "unknown", Date.now() - t0, false, message.slice(0, 100)).catch(() => {});
+      }
     } catch { /* ignora */ }
     try {
       const humanizedError = getHumanizedError(currentIntent);
