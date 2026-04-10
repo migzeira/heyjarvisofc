@@ -58,7 +58,7 @@ function NoteCard({
   onClick: (note: Note) => void;
 }) {
   const accent = getAccent(note.id);
-  const isWhatsApp = note.source === "whatsapp";
+  const isWhatsApp = note.source === "whatsapp" || note.source === "whatsapp_forward";
   const ago = formatDistanceToNow(new Date(note.created_at), { locale: ptBR, addSuffix: true });
 
   const handleCopy = (e: React.MouseEvent) => {
