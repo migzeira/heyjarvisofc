@@ -4687,12 +4687,12 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
     }
 
     // ── Busca perfil por LID (novo WhatsApp) ou telefone (fallback) ──
-    let profile: { id: string; plan: string; messages_used: number; messages_limit: number; phone_number: string; account_status: string; timezone: string | null; access_until: string | null } | null = null;
+    let profile: { id: string; plan: string; messages_used: number; messages_limit: number; phone_number: string; account_status: string; timezone: string | null; access_until: string | null; display_name?: string | null } | null = null;
 
     if (lid) {
       const { data } = await supabase
         .from("profiles")
-        .select("id, plan, messages_used, messages_limit, phone_number, account_status, timezone, access_until")
+        .select("id, plan, messages_used, messages_limit, phone_number, account_status, timezone, access_until, display_name")
         .eq("whatsapp_lid", lid)
         .maybeSingle();
       profile = data;
@@ -4706,7 +4706,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
         .replace(/:\d+$/, "");
       const { data } = await supabase
         .from("profiles")
-        .select("id, plan, messages_used, messages_limit, phone_number, account_status, timezone, access_until")
+        .select("id, plan, messages_used, messages_limit, phone_number, account_status, timezone, access_until, display_name")
         .or(`phone_number.eq.${phone},phone_number.eq.+${phone}`)
         .maybeSingle();
       profile = data;
@@ -4726,7 +4726,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       if (extraNum?.user_id) {
         const { data } = await supabase
           .from("profiles")
-          .select("id, plan, messages_used, messages_limit, phone_number, account_status, timezone, access_until")
+          .select("id, plan, messages_used, messages_limit, phone_number, account_status, timezone, access_until, display_name")
           .eq("id", extraNum.user_id)
           .maybeSingle();
         profile = data;
@@ -4740,7 +4740,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       if (resolvedPhone) {
         const { data } = await supabase
           .from("profiles")
-          .select("id, plan, messages_used, messages_limit, phone_number, account_status, timezone, access_until")
+          .select("id, plan, messages_used, messages_limit, phone_number, account_status, timezone, access_until, display_name")
           .or(
             `phone_number.eq.${resolvedPhone},phone_number.eq.+${resolvedPhone},phone_number.eq.55${resolvedPhone}`
           )
@@ -4759,12 +4759,61 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       }
     }
 
-    // Último fallback: match por pushName → display_name
-    // Usado quando LID é opaco (WhatsApp Multi-Device moderno) e resolveLidToPhone
-    // não conseguiu. Só faz match se ENCONTRAR EXATAMENTE 1 profile ativo com o
-    // primeiro nome do pushName — evita colisão entre homônimos.
+    // Flag: se vinculamos neste request, mandamos mensagem de boas-vindas
+    // em vez de processar a mensagem original (geralmente "oi" que o Maya não entenderia)
+    let justLinkedViaPending = false;
+
+    // Fallback PRINCIPAL pra clientes com LID opaco: pending_whatsapp_link ativo
+    // Quando cliente cadastra phone no MeuPerfil, whatsapp-link-init grava um
+    // pending_link com janela de 15 min. Se houver EXATAMENTE 1 pending ativo
+    // quando esta mensagem chega, vinculamos automaticamente — cliente só
+    // precisa responder "oi" ou qualquer coisa, sem precisar de código MAYA.
+    if (!profile && lid) {
+      const { data: pendingLinks } = await (supabase as any)
+        .from("pending_whatsapp_links")
+        .select("user_id, phone_number, push_name_hint, created_at")
+        .gte("expires_at", new Date().toISOString())
+        .order("created_at", { ascending: false })
+        .limit(5);
+
+      if (pendingLinks && pendingLinks.length > 0) {
+        let chosen: any = null;
+
+        if (pendingLinks.length === 1) {
+          // Caso feliz: só 1 pending ativo → bate com certeza
+          chosen = pendingLinks[0];
+        } else if (pushName) {
+          // Múltiplos pending ativos → desempata por pushName vs push_name_hint
+          const firstName = pushName.split(/[|\-/,]/)[0].trim().split(/\s+/)[0].toLowerCase();
+          const candidates = pendingLinks.filter((p: any) =>
+            (p.push_name_hint ?? "").toLowerCase().split(/\s+/)[0] === firstName
+          );
+          if (candidates.length === 1) chosen = candidates[0];
+        }
+
+        if (chosen) {
+          const { data: linkedProfile } = await supabase
+            .from("profiles")
+            .select("id, plan, messages_used, messages_limit, phone_number, account_status, timezone, access_until, display_name")
+            .eq("id", chosen.user_id)
+            .maybeSingle();
+
+          if (linkedProfile) {
+            profile = linkedProfile;
+            justLinkedViaPending = true;
+            // Vincula o LID no profile + remove o pending_link
+            await supabase.from("profiles").update({ whatsapp_lid: lid }).eq("id", chosen.user_id);
+            await (supabase as any).from("pending_whatsapp_links").delete().eq("user_id", chosen.user_id);
+            log.push(`lid_linked_via_pending: ${chosen.user_id}`);
+          }
+        }
+      }
+    }
+
+    // Último fallback: match por pushName → display_name (safety net)
+    // Usado quando pending_link já expirou ou não existe. Só vincula se
+    // ENCONTRAR EXATAMENTE 1 profile ativo com o primeiro nome do pushName.
     if (!profile && lid && pushName) {
-      // Extrai o primeiro nome (antes de " | ", " - ", espaço, etc)
       const firstName = pushName.split(/[|\-/,]/)[0].trim().split(/\s+/)[0];
       if (firstName && firstName.length >= 2) {
         const { data: matches } = await supabase
@@ -4772,20 +4821,14 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
           .select("id, plan, messages_used, messages_limit, phone_number, account_status, timezone, access_until, display_name")
           .ilike("display_name", `${firstName}%`)
           .eq("account_status", "active")
-          .is("whatsapp_lid", null) // só profiles que ainda não vincularam LID
+          .is("whatsapp_lid", null)
           .limit(2);
 
         if (matches && matches.length === 1) {
-          // Match único e seguro → auto-vincula
           profile = matches[0];
-          supabase
-            .from("profiles")
-            .update({ whatsapp_lid: lid })
-            .eq("id", matches[0].id)
-            .then(() => {}).catch(() => {});
+          supabase.from("profiles").update({ whatsapp_lid: lid }).eq("id", matches[0].id).then(() => {}).catch(() => {});
           log.push(`lid_linked_by_pushname: ${firstName} → ${matches[0].id}`);
         }
-        // Se múltiplos matches, ambíguo → não vincula. Usuário precisa do código MAYA.
       }
     }
 
@@ -4861,6 +4904,26 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
     // is_active === false significa que o agente foi pausado (admin ou usuário) → silêncio total
     if (config?.is_active === false) {
       log.push("agent_paused");
+      return log;
+    }
+
+    // 3c. Primeira mensagem após vinculação via pending_link → welcome message
+    // (não processa o "oi" como comando normal pra não confundir o Maya)
+    if (justLinkedViaPending) {
+      const userName = (profile as any).display_name?.split(/\s+/)[0] || "";
+      const hello = userName ? `Oi ${userName}! 👋` : "Oi! 👋";
+      await sendText(
+        sendPhone || replyTo,
+        `${hello}\n\n` +
+        `Tudo pronto! Seu WhatsApp está conectado. ✨\n\n` +
+        `Agora é só me mandar mensagens aqui pra:\n` +
+        `💰 Registrar gastos — _gastei 50 reais de almoço_\n` +
+        `📅 Marcar compromissos — _reunião amanhã às 14h_\n` +
+        `⏰ Criar lembretes — _me lembra de ligar pro Pedro segunda_\n` +
+        `📝 Salvar anotações — _anotação: comprar presente_\n\n` +
+        `Pode começar quando quiser! 😊`
+      );
+      log.push("welcome_sent");
       return log;
     }
 

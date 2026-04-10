@@ -3,6 +3,51 @@ const EVOLUTION_KEY = Deno.env.get("EVOLUTION_API_KEY") ?? "";
 const INSTANCE = Deno.env.get("EVOLUTION_INSTANCE_NAME") ?? "mayachat";
 
 /**
+ * Resolve um número de telefone para o JID/LID associado no WhatsApp.
+ * Usado na HORA do cadastro pra já vincular o whatsapp_lid no profile.
+ * Com isso, todas as mensagens futuras do cliente são identificadas
+ * instantaneamente pelo LID — sem precisar de código MAYA nem "oi".
+ *
+ * Retorna o JID/LID (ex: "177945360519187@lid" ou "5519...@s.whatsapp.net")
+ * ou null se o número não for WhatsApp válido ou Evolution não responder.
+ */
+export async function resolvePhoneToLid(phone: string): Promise<string | null> {
+  const normalized = phone.replace(/\D/g, "");
+  if (!normalized || normalized.length < 10) return null;
+
+  // Endpoint v2: /chat/whatsappNumbers retorna { jid, exists, number } pra cada
+  try {
+    const res = await evolutionPost(`/chat/whatsappNumbers/${INSTANCE}`, {
+      numbers: [normalized],
+    }) as unknown;
+
+    if (Array.isArray(res)) {
+      for (const item of res) {
+        const obj = item as Record<string, unknown>;
+        const jid = String(obj.jid ?? obj.remoteJid ?? obj.id ?? "");
+        const exists = obj.exists === true || obj.exists === "true";
+        if (exists && jid && (jid.endsWith("@lid") || jid.endsWith("@s.whatsapp.net"))) {
+          return jid;
+        }
+      }
+    }
+  } catch { /* fallback pra próximo método */ }
+
+  // Fallback: fetchProfile retorna profile info incluindo jid
+  try {
+    const res = await evolutionPost(`/chat/fetchProfile/${INSTANCE}`, {
+      number: normalized,
+    }) as Record<string, unknown>;
+    const jid = String(res?.wuid ?? res?.id ?? res?.jid ?? "");
+    if (jid && (jid.endsWith("@lid") || jid.endsWith("@s.whatsapp.net"))) {
+      return jid;
+    }
+  } catch { /* silent */ }
+
+  return null;
+}
+
+/**
  * Resolve um LID (@lid) para o número de telefone real consultando os contatos
  * armazenados pelo Evolution API. Tenta múltiplos endpoints (v1 e v2) porque
  * o Evolution API v2 mudou a estrutura do endpoint de contatos.

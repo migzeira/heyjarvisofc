@@ -1,24 +1,21 @@
-// whatsapp-link-init — Gera código MAYA-XXXXXX e envia pelo WhatsApp do usuário
+// whatsapp-link-init — Inicia vinculação zero-atrito do WhatsApp
 //
-// Fluxo:
-//  1. User chama este endpoint autenticado (passa JWT do Supabase Auth)
-//  2. Validamos: plano ativo, phone cadastrado, sem LID já vinculado
-//  3. Geramos código random de 6 caracteres alfanuméricos
-//  4. Salvamos em profiles.link_code + link_code_expires_at (24h)
-//  5. Enviamos mensagem via Evolution API pro phone do user
-//  6. Retornamos { code, sent: true } pra UI mostrar também
+// Fluxo pro cliente:
+//  1. Cliente cadastra phone no MeuPerfil (ou clica "Reenviar mensagem")
+//  2. Este endpoint envia uma mensagem amigável via Evolution pro phone:
+//     "Oi [Nome]! Responda qualquer coisa aqui pra ativar sua Maya"
+//  3. Salva um pending_whatsapp_link (janela de 15 min) pra o webhook
+//     reconhecer quando o cliente responder
+//  4. Cliente responde "oi" (ou qualquer coisa) no WhatsApp
+//  5. Webhook procura pending_link ativo, vincula o LID ao profile
+//  6. Pronto — todas as próximas mensagens funcionam direto
 //
-// Por que esse fluxo?
-//  WhatsApp Multi-Device usa LIDs opacos (@lid) que não contém o número real.
-//  O Evolution API retorna 400 quando tenta enviar pra @lid sem resolução.
-//  A solução robusta é: enviar PRIMEIRO do nosso lado (usando o phone real
-//  que o user cadastrou no app), usuário responde com o código, webhook
-//  captura o @lid na resposta e vincula ao profile. Daí pra frente, tudo
-//  funciona pelo @lid já salvo.
+// Gera tambem um link_code MAYA-XXXXXX como safety net (fallback caso
+// haja múltiplos pending_links ativos no mesmo momento).
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { sendText } from "../_shared/evolution.ts";
+import { sendText, resolvePhoneToLid } from "../_shared/evolution.ts";
 
 const supabase = createClient(
   Deno.env.get("SUPABASE_URL")!,
@@ -38,7 +35,7 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
-// Gera código random de 6 chars alfanuméricos maiúsculos (sem 0/O/1/I por legibilidade)
+// Gera código random de 6 chars alfanuméricos maiúsculos (sem 0/O/1/I)
 function generateCode(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let code = "";
@@ -88,31 +85,99 @@ serve(async (req) => {
     }, 400);
   }
 
-  // Gera novo código (sobrescreve qualquer antigo)
-  const code = generateCode();
-  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+  // ───────────────────────────────────────────────────────
+  // PASSO 1 — Tenta resolver phone → LID DIRETO via Evolution
+  // Se der certo, vincula na hora e cliente já pode usar sem reenviar nada.
+  // ───────────────────────────────────────────────────────
+  let resolvedJid: string | null = null;
+  try {
+    resolvedJid = await resolvePhoneToLid(phone);
+  } catch (err) {
+    console.warn("[link-init] resolvePhoneToLid error:", err);
+  }
 
-  const { error: updErr } = await supabase
+  if (resolvedJid) {
+    await supabase
+      .from("profiles")
+      .update({
+        whatsapp_lid: resolvedJid,
+        link_code: null,
+        link_code_expires_at: null,
+      } as any)
+      .eq("id", userId);
+
+    // Remove qualquer pending_link antigo
+    await (supabase as any).from("pending_whatsapp_links").delete().eq("user_id", userId);
+
+    // Envia mensagem de boas-vindas (não crítica — se falhar, cliente manda "oi" e já tá vinculado)
+    const firstName = (profile.display_name ?? "").split(/\s+/)[0] || "";
+    const greeting = firstName ? `Oi ${firstName}! 👋` : "Oi! 👋";
+    const welcomeMsg =
+      `${greeting}\n\n` +
+      `Sou a *Maya*, sua assistente pessoal. Tudo pronto! ✨\n\n` +
+      `A partir de agora você pode me mandar mensagens aqui pra:\n` +
+      `💰 Registrar gastos — _gastei 50 reais de almoço_\n` +
+      `📅 Marcar compromissos — _reunião amanhã às 14h_\n` +
+      `⏰ Criar lembretes — _me lembra de ligar pro Pedro_\n` +
+      `📝 Salvar anotações\n\n` +
+      `Manda um *"oi"* pra começar ou já envia seu primeiro registro! 😊`;
+
+    let sent = false;
+    try {
+      await sendText(phone, welcomeMsg);
+      sent = true;
+    } catch (err) {
+      console.warn("[link-init] welcome send failed:", err);
+    }
+
+    return json({
+      ok: true,
+      strategy: "direct_link",
+      linked: true,
+      jid: resolvedJid,
+      sent,
+    });
+  }
+
+  // ───────────────────────────────────────────────────────
+  // PASSO 2 — Fallback: pending_link + mensagem "responda qualquer coisa"
+  // Usado quando Evolution não consegue resolver o número direto.
+  // Cliente responde "oi" → webhook vincula pelo pending_link único.
+  // ───────────────────────────────────────────────────────
+  const code = generateCode();
+  const codeExpires = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+
+  await supabase
     .from("profiles")
     .update({
       link_code: code,
-      link_code_expires_at: expiresAt,
+      link_code_expires_at: codeExpires,
     } as any)
     .eq("id", userId);
 
-  if (updErr) {
-    console.error("[link-init] update error:", updErr);
-    return json({ error: "db_error" }, 500);
-  }
+  const pendingExpires = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+  await (supabase as any)
+    .from("pending_whatsapp_links")
+    .upsert({
+      user_id: userId,
+      phone_number: phone,
+      push_name_hint: profile.display_name,
+      expires_at: pendingExpires,
+      created_at: new Date().toISOString(),
+    }, { onConflict: "user_id" });
 
-  // Envia mensagem via Evolution API
   const firstName = (profile.display_name ?? "").split(/\s+/)[0] || "";
   const greeting = firstName ? `Oi ${firstName}! 👋` : "Oi! 👋";
   const msg =
     `${greeting}\n\n` +
-    `Pra conectar seu WhatsApp à Maya, envie este código aqui mesmo:\n\n` +
-    `*MAYA-${code}*\n\n` +
-    `_Esse passo acontece só uma vez. Depois disso é só me mandar mensagens normalmente — registrar gastos, marcar compromissos, criar lembretes, tudo pelo WhatsApp._`;
+    `Sou a *Maya*, sua assistente pessoal.\n\n` +
+    `Pra começar é só me mandar qualquer mensagem aqui — um *"oi"* já tá ótimo. 😊\n\n` +
+    `Depois disso você vai poder:\n` +
+    `💰 Registrar gastos\n` +
+    `📅 Marcar compromissos\n` +
+    `⏰ Criar lembretes\n` +
+    `📝 Salvar anotações\n\n` +
+    `Tudo direto por aqui pelo WhatsApp. ✨`;
 
   let sent = false;
   let sendError: string | null = null;
@@ -126,10 +191,11 @@ serve(async (req) => {
 
   return json({
     ok: true,
-    code,
-    expires_at: expiresAt,
+    strategy: "pending_link",
+    linked: false,
     sent,
     send_error: sendError,
-    already_linked: !!profile.whatsapp_lid,
+    expires_at: pendingExpires,
+    code, // safety net pra UI mostrar caso usuário peça
   });
 });
