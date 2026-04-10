@@ -219,17 +219,20 @@ serve(async (req) => {
         .order("event_time", { ascending: true });
 
       // Busca lembretes pendentes de hoje no fuso do usuário
+      // EXCLUI hábitos (source='habit') e briefings anteriores (source='daily_briefing')
+      // — hábitos tem seu próprio envio agendado, não aparecem no resumo diário
       const todayStart = new Date(`${todayUserTz}T00:00:00`);
       todayStart.setMinutes(todayStart.getMinutes() - todayStart.getTimezoneOffset());
       const todayStartIso = new Date(`${todayUserTz}T00:00:00Z`).toISOString();
       const todayEndIso = new Date(`${todayUserTz}T23:59:59Z`).toISOString();
       const { data: reminders } = await supabase
         .from("reminders")
-        .select("title, send_at, message")
+        .select("title, send_at, message, source")
         .eq("user_id", user.id)
         .eq("status", "pending")
         .gte("send_at", todayStartIso)
         .lte("send_at", todayEndIso)
+        .not("source", "in", "(habit,daily_briefing)")
         .order("send_at", { ascending: true });
 
       const hasEvents = events && events.length > 0;
