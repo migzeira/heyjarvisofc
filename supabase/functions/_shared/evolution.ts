@@ -4,26 +4,71 @@ const INSTANCE = Deno.env.get("EVOLUTION_INSTANCE_NAME") ?? "mayachat";
 
 /**
  * Resolve um LID (@lid) para o número de telefone real consultando os contatos
- * armazenados pelo Evolution API. Retorna null se não conseguir resolver.
+ * armazenados pelo Evolution API. Tenta múltiplos endpoints (v1 e v2) porque
+ * o Evolution API v2 mudou a estrutura do endpoint de contatos.
+ * Retorna null se nenhum endpoint conseguir resolver.
  */
 export async function resolveLidToPhone(lid: string): Promise<string | null> {
+  // Normaliza o LID — remove sufixo @lid pra usar só o ID numérico
+  const lidId = lid.replace(/@lid$/, "");
+
+  // Helper: extrai phone de um objeto de contato do Evolution
+  const extractPhone = (obj: Record<string, unknown>): string | null => {
+    const jid = String(obj.id ?? obj.remoteJid ?? obj.jid ?? "");
+    if (jid.endsWith("@s.whatsapp.net")) {
+      return jid.replace(/@s\.whatsapp\.net$/, "").replace(/:\d+$/, "");
+    }
+    // Campos alternativos que alguns Evolution versions retornam
+    const alt = String(obj.pn ?? obj.phoneNumber ?? obj.phone ?? "");
+    if (/^\d{10,15}$/.test(alt)) return alt;
+    return null;
+  };
+
+  // Tentativa 1: Evolution v2 /chat/findContacts (POST com where)
+  try {
+    const contacts = await evolutionPost(`/chat/findContacts/${INSTANCE}`, {
+      where: { id: lid },
+    }) as unknown;
+
+    if (Array.isArray(contacts)) {
+      for (const c of contacts) {
+        const phone = extractPhone(c as Record<string, unknown>);
+        if (phone) return phone;
+      }
+    }
+  } catch { /* fallback para próximo endpoint */ }
+
+  // Tentativa 2: Evolution v1 /contact/getContacts (legacy)
   try {
     const contacts = await evolutionPost(`/contact/getContacts/${INSTANCE}`, {
       where: { id: lid },
-    }) as Array<Record<string, unknown>>;
+    }) as unknown;
 
-    if (!Array.isArray(contacts)) return null;
-
-    for (const c of contacts) {
-      const jid = String(c.id ?? c.remoteJid ?? "");
-      if (jid.endsWith("@s.whatsapp.net")) {
-        return jid.replace(/@s\.whatsapp\.net$/, "").replace(/:\d+$/, "");
+    if (Array.isArray(contacts)) {
+      for (const c of contacts) {
+        const phone = extractPhone(c as Record<string, unknown>);
+        if (phone) return phone;
       }
     }
-    return null;
-  } catch {
-    return null; // Falha silenciosa — LID não resolvível
-  }
+  } catch { /* fallback para próximo */ }
+
+  // Tentativa 3: Buscar TODOS os contatos e filtrar localmente (último recurso)
+  try {
+    const contacts = await evolutionPost(`/chat/findContacts/${INSTANCE}`, {}) as unknown;
+    if (Array.isArray(contacts)) {
+      for (const c of contacts) {
+        const obj = c as Record<string, unknown>;
+        const cId = String(obj.id ?? obj.remoteJid ?? "");
+        // Bate com o LID inteiro ou só com o ID numérico
+        if (cId === lid || cId === `${lidId}@lid` || cId.startsWith(`${lidId}@`)) {
+          const phone = extractPhone(obj);
+          if (phone) return phone;
+        }
+      }
+    }
+  } catch { /* silencioso */ }
+
+  return null;
 }
 
 /** Envia mensagem de texto via Evolution API */

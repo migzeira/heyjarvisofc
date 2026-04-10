@@ -4645,19 +4645,32 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       const code = linkMatch[1].toUpperCase();
       log.push(`link_attempt: ${code}`);
 
+      // Pega o phone_number também pra responder no canal correto
+      // (replyTo pode ser @lid opaco que o Evolution não aceita)
       const { data: profileByCode } = await supabase
         .from("profiles")
-        .select("id, link_code_expires_at")
+        .select("id, link_code_expires_at, phone_number")
         .eq("link_code", code)
         .maybeSingle();
 
+      // Helper pra enviar resposta sem quebrar se @lid falhar
+      const replyToUser = async (text: string) => {
+        const phoneForReply = profileByCode?.phone_number?.replace(/\D/g, "") || replyTo;
+        try {
+          await sendText(phoneForReply, text);
+        } catch (err) {
+          // Último recurso: tenta pelo replyTo direto
+          try { await sendText(replyTo, text); } catch { /* silent */ }
+        }
+      };
+
       if (!profileByCode) {
-        await sendText(replyTo, "❌ Código inválido. Gere um novo código no app Minha Maya.");
+        await replyToUser("❌ Código inválido. Gere um novo código no app Minha Maya em *minhamaya.com/dashboard/perfil*.");
         return log;
       }
 
       if (profileByCode.link_code_expires_at && new Date(profileByCode.link_code_expires_at) < new Date()) {
-        await sendText(replyTo, "⏰ Código expirado. Gere um novo no app Minha Maya.");
+        await replyToUser("⏰ Código expirado. Gere um novo no app Minha Maya.");
         return log;
       }
 
@@ -4668,7 +4681,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
         link_code_expires_at: null,
       }).eq("id", profileByCode.id);
 
-      await sendText(replyTo, "✅ *WhatsApp vinculado com sucesso!*\nAgora pode usar a Minha Maya normalmente. Tente: *gastei 50 reais de almoço*");
+      await replyToUser("✅ *WhatsApp vinculado com sucesso!*\n\nAgora pode usar a Minha Maya normalmente. Tente:\n• _gastei 50 reais de almoço_\n• _reunião amanhã às 14h_\n• _me lembra de ligar pro Pedro segunda_");
       log.push("linked!");
       return log;
     }
@@ -4746,8 +4759,42 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       }
     }
 
+    // Último fallback: match por pushName → display_name
+    // Usado quando LID é opaco (WhatsApp Multi-Device moderno) e resolveLidToPhone
+    // não conseguiu. Só faz match se ENCONTRAR EXATAMENTE 1 profile ativo com o
+    // primeiro nome do pushName — evita colisão entre homônimos.
+    if (!profile && lid && pushName) {
+      // Extrai o primeiro nome (antes de " | ", " - ", espaço, etc)
+      const firstName = pushName.split(/[|\-/,]/)[0].trim().split(/\s+/)[0];
+      if (firstName && firstName.length >= 2) {
+        const { data: matches } = await supabase
+          .from("profiles")
+          .select("id, plan, messages_used, messages_limit, phone_number, account_status, timezone, access_until, display_name")
+          .ilike("display_name", `${firstName}%`)
+          .eq("account_status", "active")
+          .is("whatsapp_lid", null) // só profiles que ainda não vincularam LID
+          .limit(2);
+
+        if (matches && matches.length === 1) {
+          // Match único e seguro → auto-vincula
+          profile = matches[0];
+          supabase
+            .from("profiles")
+            .update({ whatsapp_lid: lid })
+            .eq("id", matches[0].id)
+            .then(() => {}).catch(() => {});
+          log.push(`lid_linked_by_pushname: ${firstName} → ${matches[0].id}`);
+        }
+        // Se múltiplos matches, ambíguo → não vincula. Usuário precisa do código MAYA.
+      }
+    }
+
     if (!profile) {
-      // Número não cadastrado em nenhum dashboard → silêncio total (sem resposta)
+      // Número/LID totalmente desconhecido — silêncio total (evita spam em bots/scanners).
+      // Fluxo correto pra novos clientes:
+      //   1. Cadastra phone no MeuPerfil → backend envia código MAYA-XXXXXX via Evolution
+      //   2. User responde com o código → esta função captura no bloco linkMatch acima
+      //   3. LID vinculado → futuras mensagens resolvem por whatsapp_lid direto
       log.push("unknown_number");
       return log;
     }
@@ -4768,8 +4815,9 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
     if (profile.account_status === "pending") {
       await sendText(
         sendPhone || replyTo,
-        "⏳ *Conta aguardando ativação*\n\nSua conta ainda não foi ativada.\n\nSe você já realizou sua assinatura, acesse o app e salve seu número de WhatsApp para ativar automaticamente.\n\n👉 *minhamaya.com*"
+        "⏳ *Sua conta ainda não tem plano ativo*\n\nPara usar a Maya, assine um plano no app:\n👉 *minhamaya.com*\n\nSe já assinou ou um administrador liberou seu acesso, a Maya vai começar a responder em instantes."
       );
+      log.push("account_pending");
       return log;
     }
 
@@ -4810,7 +4858,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       .maybeSingle();
 
     // 3b. Verifica se o agente está ativo (toggle do dashboard)
-    // is_active === false significa que o usuário pausou manualmente → silêncio total
+    // is_active === false significa que o agente foi pausado (admin ou usuário) → silêncio total
     if (config?.is_active === false) {
       log.push("agent_paused");
       return log;

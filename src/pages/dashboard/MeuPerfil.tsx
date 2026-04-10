@@ -139,6 +139,7 @@ export default function MeuPerfil() {
   const [profile, setProfile] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [linking, setLinking] = useState(false);
 
   // Phone fields (split from stored number)
   const [selectedDdi, setSelectedDdi] = useState("55");
@@ -236,10 +237,13 @@ export default function MeuPerfil() {
         if (remaining <= 0) {
           toast.success("Número salvo! ⚠️ Este foi seu último ajuste permitido.");
         } else if (!storedPhone) {
-          toast.success("🎉 Número salvo! A Maya já pode responder no seu WhatsApp.");
+          toast.success("🎉 Número salvo!");
         } else {
           toast.success(`Número atualizado! Você ainda pode alterá-lo mais ${remaining} vez${remaining === 1 ? "" : "es"}.`);
         }
+        // Dispara envio do código de vinculação automaticamente
+        // (agora temos plano ativo + phone salvo → único passo pendente é vincular o LID)
+        await sendLinkCode({ silent: false });
       } else if (!newPhone) {
         toast.success("Número removido. A Maya não responderá até você adicionar um número.");
       } else {
@@ -247,6 +251,49 @@ export default function MeuPerfil() {
       }
     } finally {
       setSaving(false);
+    }
+  };
+
+  // Chama a edge function whatsapp-link-init que gera um código MAYA-XXXXXX
+  // e envia pro WhatsApp do usuário via Evolution API.
+  const sendLinkCode = async (opts: { silent?: boolean } = {}) => {
+    setLinking(true);
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData?.session?.access_token;
+      if (!token) { toast.error("Sessão expirada. Recarregue a página."); return; }
+
+      const url = `${(import.meta as any).env.VITE_SUPABASE_URL}/functions/v1/whatsapp-link-init`;
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({}),
+      });
+
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        if (!opts.silent) toast.error(data.message || "Não consegui enviar o código. Tente novamente.");
+        return;
+      }
+
+      // Atualiza profile local com o novo código
+      setProfile((p: any) => ({ ...p, link_code: data.code, link_code_expires_at: data.expires_at }));
+
+      if (!opts.silent) {
+        if (data.sent) {
+          toast.success(`✅ Código enviado no seu WhatsApp! Envie MAYA-${data.code} aqui pra vincular.`);
+        } else {
+          toast.warning(`Código gerado: MAYA-${data.code}. Envie esse código no WhatsApp da Maya pra vincular.`);
+        }
+      }
+    } catch (err) {
+      if (!opts.silent) toast.error("Erro de rede. Tente novamente.");
+      console.error("sendLinkCode error:", err);
+    } finally {
+      setLinking(false);
     }
   };
 
@@ -419,19 +466,48 @@ export default function MeuPerfil() {
             </div>
           )}
 
-          {profile.phone_number && !isPhoneLocked && (
+          {profile.phone_number && !isPhoneLocked && profile.whatsapp_lid && (
             <div className="flex items-start gap-2 p-3 rounded-lg bg-green-500/10 border border-green-500/20 text-sm text-green-200">
               <CheckCircle className="h-4 w-4 shrink-0 mt-0.5" />
               <div>
-                <p className="font-semibold">Maya ativa!</p>
+                <p className="font-semibold">WhatsApp vinculado ✓</p>
                 <p className="mt-0.5">
-                  Respondendo no <span className="font-mono font-medium text-green-100">{formatFullPhone(profile.phone_number)}</span>
+                  A Maya está respondendo no <span className="font-mono font-medium text-green-100">{formatFullPhone(profile.phone_number)}</span>
                 </p>
                 {changesRemaining > 0 && changesRemaining < MAX_PHONE_CHANGES && (
                   <p className="mt-1.5 text-green-300/70 text-xs">
                     Você ainda pode alterar o número mais {changesRemaining} vez{changesRemaining === 1 ? "" : "es"}.
                   </p>
                 )}
+              </div>
+            </div>
+          )}
+
+          {/* Aguardando vinculação — phone salvo mas LID ainda não capturado */}
+          {profile.phone_number && !isPhoneLocked && !profile.whatsapp_lid && hasActivePlan && (
+            <div className="flex items-start gap-2 p-3 rounded-lg bg-blue-500/10 border border-blue-500/30 text-sm text-blue-200">
+              <Smartphone className="h-4 w-4 shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <p className="font-semibold text-blue-100">Aguardando vinculação do WhatsApp</p>
+                <p className="mt-0.5 text-blue-200/80">
+                  Enviamos um código de vinculação para <span className="font-mono">{formatFullPhone(profile.phone_number)}</span>.
+                </p>
+                {profile.link_code && (
+                  <div className="mt-2 p-2 bg-blue-950/50 rounded border border-blue-500/30">
+                    <p className="text-xs text-blue-300/70">Seu código é:</p>
+                    <p className="font-mono font-bold text-lg text-blue-100 tracking-wider">MAYA-{profile.link_code}</p>
+                    <p className="text-xs text-blue-300/70 mt-1">Abra o WhatsApp da Maya e envie esse código.</p>
+                  </div>
+                )}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="mt-3 h-8 text-xs border-blue-500/40 text-blue-200 hover:bg-blue-500/20"
+                  onClick={() => sendLinkCode({ silent: false })}
+                  disabled={linking}
+                >
+                  {linking ? "Enviando..." : profile.link_code ? "Reenviar código" : "Gerar código"}
+                </Button>
               </div>
             </div>
           )}
