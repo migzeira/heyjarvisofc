@@ -11,7 +11,7 @@ import {
   Wallet, CalendarDays, StickyNote, Settings, BarChart3, Link2,
   TrendingDown, BookOpen, Bell, BellRing, Plus, ChevronRight,
   MessageSquare, Clock, Zap, Smartphone, AlertTriangle, XCircle, ExternalLink,
-  X, Lock,
+  X, Lock, CheckCircle,
 } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { toast } from "sonner";
@@ -263,11 +263,36 @@ export default function DashboardHome() {
   // ── Subscription status helpers ───────────────
   const accountStatus = profile?.account_status;
   const accessUntil = profile?.access_until ? new Date(profile.access_until) : null;
+  const accessSource = profile?.access_source as string | null;
   const isSuspended = accountStatus === "suspended";
   const isPending = accountStatus === "pending";
-  const isCancelling = accountStatus === "active" && accessUntil && accessUntil > new Date();
+  // "Assinatura cancelada" SÓ aparece se Kirvano enviou webhook de cancelamento
+  const subscriptionCancelledAt = profile?.subscription_cancelled_at ? new Date(profile.subscription_cancelled_at) : null;
+  const isCancelling = accountStatus === "active" && !!subscriptionCancelledAt && accessUntil && accessUntil > new Date();
+  // "Liberado pelo admin" — quando admin ativou com período (sem cancelamento Kirvano)
+  const isAdminGranted = accountStatus === "active"
+    && !subscriptionCancelledAt
+    && (accessSource === "admin_trial" || accessSource === "admin_plan")
+    && accessUntil && accessUntil > new Date();
   const isExpired = accountStatus === "active" && accessUntil && accessUntil <= new Date();
   const daysLeft = accessUntil ? Math.max(0, Math.ceil((accessUntil.getTime() - Date.now()) / 86400000)) : null;
+
+  // Dismiss persistente do banner "Liberado pelo admin" — chave inclui access_until
+  // para que um novo período/renovação reapresente o banner.
+  const adminBannerKey = accessUntil ? `maya_admin_banner_dismissed_v1:${accessUntil.toISOString()}` : null;
+  const [adminBannerDismissed, setAdminBannerDismissed] = useState<boolean>(
+    () => (typeof window !== "undefined" && adminBannerKey) ? !!localStorage.getItem(adminBannerKey) : false
+  );
+  useEffect(() => {
+    if (typeof window === "undefined" || !adminBannerKey) return;
+    setAdminBannerDismissed(!!localStorage.getItem(adminBannerKey));
+  }, [adminBannerKey]);
+  const dismissAdminBanner = () => {
+    if (adminBannerKey) {
+      localStorage.setItem(adminBannerKey, "1");
+      setAdminBannerDismissed(true);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -317,6 +342,30 @@ export default function DashboardHome() {
         </div>
       )}
 
+      {/* ── Admin liberou acesso (período teste ou plano) ── */}
+      {isAdminGranted && daysLeft !== null && !adminBannerDismissed && (
+        <div className="flex items-center gap-3 p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-200">
+          <CheckCircle className="h-5 w-5 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold">
+              {accessSource === "admin_trial" ? "Período teste liberado pelo admin" : "Plano liberado pelo admin"}
+            </p>
+            <p className="text-xs text-emerald-300/80 mt-0.5">
+              Seu acesso expira {daysLeft === 0 ? "hoje" : `em ${daysLeft} dia${daysLeft > 1 ? "s" : ""}`} —{" "}
+              {accessUntil!.toLocaleDateString("pt-BR")}. Aproveite!
+            </p>
+          </div>
+          <button
+            onClick={dismissAdminBanner}
+            aria-label="Fechar aviso"
+            className="shrink-0 p-1 rounded-md hover:bg-emerald-500/20 text-emerald-300/70 hover:text-emerald-200 transition-colors"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
+      {/* ── Assinatura cancelada (Kirvano webhook) — só aparece se subscription_cancelled_at estiver setado ── */}
       {isCancelling && daysLeft !== null && !dismissedBanners.has("cancelling") && (
         <div className="flex items-center gap-3 p-4 rounded-xl bg-yellow-500/10 border border-yellow-500/30 text-yellow-300">
           <AlertTriangle className="h-5 w-5 shrink-0" />

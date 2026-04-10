@@ -251,11 +251,19 @@ export default function MeuPerfil() {
   };
 
   // ── Plan label helpers ──
+  // Se foi admin_trial → "Período teste"
+  // Se foi admin_plan  → "Mensal/Anual (admin)"
+  // Se foi kirvano     → "Mensal/Anual"
+  const accessSource = profile?.access_source as string | null;
+  const subscriptionCancelledAt = profile?.subscription_cancelled_at ? new Date(profile.subscription_cancelled_at) : null;
   const planLabel = (() => {
-    const plan = profile?.plan ?? "";
-    if (plan === "maya_anual") return "Anual";
-    if (plan === "maya_mensal") return "Mensal";
-    return plan || "Sem plano";
+    if (accessSource === "admin_trial") return "Período teste";
+    const planName = profile?.plan === "maya_anual" ? "Anual"
+      : profile?.plan === "maya_mensal" ? "Mensal"
+      : profile?.plan || "Sem plano";
+    if (accessSource === "admin_plan") return `${planName} (liberado pelo admin)`;
+    if (subscriptionCancelledAt) return `${planName} (cancelado)`;
+    return planName;
   })();
   const accessUntilDate = profile?.access_until ? new Date(profile.access_until) : null;
   const daysLeft = accessUntilDate

@@ -4773,13 +4773,19 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       return log;
     }
 
-    // 2b. Verifica se o período de acesso expirou (assinatura cancelada que estava em grace period)
+    // 2b. Verifica se o período de acesso expirou
+    // Volta pra 'pending' (sem plano) ao invés de 'suspended' (suspended = banido).
+    // Mantém o aviso "Sua assinatura expirou" mas sem tratar como banimento.
     if (profile.access_until) {
       const accessUntilDate = new Date(profile.access_until);
       if (!isNaN(accessUntilDate.getTime()) && accessUntilDate < new Date()) {
-        // Período expirou → suspende a conta automaticamente e avisa
         supabase.from("profiles")
-          .update({ account_status: "suspended", access_until: null })
+          .update({
+            account_status: "pending",
+            access_until: null,
+            access_source: null,
+            subscription_cancelled_at: null,
+          } as any)
           .eq("id", profile.id)
           .then(() => {}).catch(() => {});
         supabase.from("agent_configs")

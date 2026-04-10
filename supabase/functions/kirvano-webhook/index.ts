@@ -200,8 +200,10 @@ async function handleActivate(
     plan,
     messages_limit: 999999,
     access_until: null,
+    access_source: "kirvano",
+    subscription_cancelled_at: null, // ativa = limpa qualquer cancelamento anterior
     ...(subscriptionId && { kirvano_subscription_id: subscriptionId }),
-  }).eq("id", userId);
+  } as any).eq("id", userId);
 
   // Garante agente ligado
   await supabase.from("agent_configs").update({ is_active: true }).eq("user_id", userId);
@@ -229,7 +231,9 @@ async function handleCancel(
   await supabase.from("profiles").update({
     account_status: "active",
     access_until: accessUntil,
-  }).eq("id", userId);
+    access_source: "kirvano",
+    subscription_cancelled_at: new Date().toISOString(), // marca o cancelamento
+  } as any).eq("id", userId);
 
   // Notifica no WhatsApp
   const until = new Date(accessUntil).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" });
@@ -245,7 +249,9 @@ async function handleRevoke(userId: string): Promise<void> {
   await supabase.from("profiles").update({
     account_status: "suspended",
     access_until: null,
-  }).eq("id", userId);
+    access_source: null,
+    subscription_cancelled_at: null,
+  } as any).eq("id", userId);
 
   // Pausa o agente
   await supabase.from("agent_configs").update({ is_active: false }).eq("user_id", userId);

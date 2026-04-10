@@ -209,30 +209,34 @@ export default function UserDetailModal({ userId, userName, open, onClose, onPro
     const { error } = await (supabase.from("profiles").update({
       account_status: "active",
       access_until: accessUntil,
+      access_source: "admin_trial",
+      subscription_cancelled_at: null,
     } as any).eq("id", userId) as any);
     await supabase.from("agent_configs").update({ is_active: true } as any).eq("user_id", userId);
     if (error) toast.error("Erro ao ativar");
     else {
-      toast.success(`Conta ativada por ${days} dia${days > 1 ? "s" : ""}!`);
-      setProfile((p: any) => ({ ...p, account_status: "active", access_until: accessUntil }));
+      toast.success(`Período teste de ${days} dia${days > 1 ? "s" : ""} liberado!`);
+      setProfile((p: any) => ({ ...p, account_status: "active", access_until: accessUntil, access_source: "admin_trial", subscription_cancelled_at: null }));
       setActivatingDays("");
       onProfileUpdate?.();
     }
   };
 
-  // Ativação direta de plano Mensal ou Anual — seta plan + access_until
+  // Ativação direta de plano Mensal ou Anual — seta plan + access_until + source
   const handleActivatePlan = async (plan: "maya_mensal" | "maya_anual", days: number) => {
     const accessUntil = addDays(new Date(), days).toISOString();
     const { error } = await (supabase.from("profiles").update({
       account_status: "active",
       plan,
       access_until: accessUntil,
+      access_source: "admin_plan",
+      subscription_cancelled_at: null,
     } as any).eq("id", userId) as any);
     await supabase.from("agent_configs").update({ is_active: true } as any).eq("user_id", userId);
     if (error) { toast.error("Erro ao ativar plano"); return; }
     const label = plan === "maya_anual" ? "Anual" : "Mensal";
-    toast.success(`Plano ${label} ativado por ${days} dias!`);
-    setProfile((p: any) => ({ ...p, plan, account_status: "active", access_until: accessUntil }));
+    toast.success(`Plano ${label} liberado pelo admin por ${days} dias!`);
+    setProfile((p: any) => ({ ...p, plan, account_status: "active", access_until: accessUntil, access_source: "admin_plan", subscription_cancelled_at: null }));
     onProfileUpdate?.();
   };
 
@@ -240,17 +244,53 @@ export default function UserDetailModal({ userId, userName, open, onClose, onPro
     const { error } = await (supabase.from("profiles").update({
       account_status: "active",
       access_until: null,
+      access_source: "admin_plan",
+      subscription_cancelled_at: null,
     } as any).eq("id", userId) as any);
     await supabase.from("agent_configs").update({ is_active: true } as any).eq("user_id", userId);
     if (error) toast.error("Erro ao ativar");
-    else { toast.success("Conta ativada!"); setProfile((p: any) => ({ ...p, account_status: "active", access_until: null })); onProfileUpdate?.(); }
+    else {
+      toast.success("Conta ativada permanentemente!");
+      setProfile((p: any) => ({ ...p, account_status: "active", access_until: null, access_source: "admin_plan", subscription_cancelled_at: null }));
+      onProfileUpdate?.();
+    }
   };
 
   const handleSuspend = async () => {
-    const { error } = await (supabase.from("profiles").update({ account_status: "suspended", access_until: null } as any).eq("id", userId) as any);
+    const { error } = await (supabase.from("profiles").update({
+      account_status: "suspended",
+      access_until: null,
+      access_source: null,
+      subscription_cancelled_at: null,
+    } as any).eq("id", userId) as any);
     await supabase.from("agent_configs").update({ is_active: false } as any).eq("user_id", userId);
     if (error) toast.error("Erro ao suspender");
-    else { toast.success("Conta suspensa"); setProfile((p: any) => ({ ...p, account_status: "suspended", access_until: null })); onProfileUpdate?.(); }
+    else {
+      toast.success("Conta suspensa");
+      setProfile((p: any) => ({ ...p, account_status: "suspended", access_until: null, access_source: null, subscription_cancelled_at: null }));
+      onProfileUpdate?.();
+    }
+  };
+
+  // Pausa apenas o agente (silencioso) — não mexe em account_status/plan
+  const handlePauseAgent = async () => {
+    const { error } = await (supabase.from("agent_configs").update({ is_active: false } as any).eq("user_id", userId) as any);
+    if (error) toast.error("Erro ao pausar agente");
+    else {
+      toast.success("Agente pausado (silencioso)");
+      setAgentConfig((c: any) => ({ ...c, is_active: false }));
+      onProfileUpdate?.();
+    }
+  };
+
+  const handleResumeAgent = async () => {
+    const { error } = await (supabase.from("agent_configs").update({ is_active: true } as any).eq("user_id", userId) as any);
+    if (error) toast.error("Erro ao retomar agente");
+    else {
+      toast.success("Agente retomado");
+      setAgentConfig((c: any) => ({ ...c, is_active: true }));
+      onProfileUpdate?.();
+    }
   };
 
   const daysSince = profile?.created_at ? differenceInDays(new Date(), new Date(profile.created_at)) : 0;
@@ -367,23 +407,48 @@ export default function UserDetailModal({ userId, userName, open, onClose, onPro
                 }>
                   {profile?.account_status === "active" ? "Ativa" : profile?.account_status === "suspended" ? "Suspensa" : "Pendente"}
                 </Badge>
+                {agentConfig && (
+                  <Badge className={
+                    agentConfig.is_active
+                      ? "bg-blue-500/20 text-blue-300 border-blue-500/30 text-xs"
+                      : "bg-gray-500/20 text-gray-300 border-gray-500/30 text-xs"
+                  }>
+                    Agente: {agentConfig.is_active ? "Ativo" : "Pausado"}
+                  </Badge>
+                )}
                 {profile?.access_until && (
                   <span className="text-xs text-muted-foreground">
                     Expira: {format(new Date(profile.access_until), "dd/MM/yyyy", { locale: ptBR })}
                   </span>
                 )}
-                <div className="flex gap-2 ml-auto">
-                  {profile?.account_status !== "active" && (
-                    <Button size="sm" variant="default" className="h-8 text-xs" onClick={handleActivatePermanent}>
-                      Ativar permanente
-                    </Button>
-                  )}
-                  {profile?.account_status !== "suspended" && (
-                    <Button size="sm" variant="destructive" className="h-8 text-xs" onClick={handleSuspend}>
-                      Suspender
-                    </Button>
-                  )}
-                </div>
+                {profile?.access_source && (
+                  <span className="text-xs text-muted-foreground">
+                    Origem: {profile.access_source === "kirvano" ? "Kirvano" : profile.access_source === "admin_plan" ? "Admin (plano)" : profile.access_source === "admin_trial" ? "Admin (teste)" : profile.access_source}
+                  </span>
+                )}
+              </div>
+
+              <div className="flex flex-wrap gap-2 pt-2 border-t border-border">
+                {profile?.account_status !== "active" && (
+                  <Button size="sm" variant="default" className="h-8 text-xs" onClick={handleActivatePermanent}>
+                    Ativar permanente
+                  </Button>
+                )}
+                {agentConfig && agentConfig.is_active && profile?.account_status === "active" && (
+                  <Button size="sm" variant="secondary" className="h-8 text-xs" onClick={handlePauseAgent}>
+                    Pausar agente
+                  </Button>
+                )}
+                {agentConfig && !agentConfig.is_active && profile?.account_status === "active" && (
+                  <Button size="sm" variant="default" className="h-8 text-xs bg-blue-600 hover:bg-blue-500" onClick={handleResumeAgent}>
+                    Retomar agente
+                  </Button>
+                )}
+                {profile?.account_status !== "suspended" && (
+                  <Button size="sm" variant="destructive" className="h-8 text-xs ml-auto" onClick={handleSuspend}>
+                    Suspender conta
+                  </Button>
+                )}
               </div>
             </div>
 
