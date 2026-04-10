@@ -890,7 +890,7 @@ export default function Index() {
             </div>
           </AnimateIn>
           <AnimateIn from="right">
-            <AutoChat lines={CHAT_FINANCEIRO} accent="emerald" />
+            <GifPhone src="/gifs/gif-gastos.webm" alt="Maya controlando gastos" />
           </AnimateIn>
         </div>
       </Section>
@@ -899,7 +899,7 @@ export default function Index() {
       <Section>
         <div className="grid lg:grid-cols-2 gap-16 items-center">
           <AnimateIn from="left" className="order-2 lg:order-1">
-            <AutoChat lines={CHAT_LEMBRETES} accent="amber" />
+            <GifPhone src="/gifs/gif-lembretes.webm" alt="Maya gerenciando lembretes" />
           </AnimateIn>
           <AnimateIn from="right" className="order-1 lg:order-2">
             <div className="space-y-6">
