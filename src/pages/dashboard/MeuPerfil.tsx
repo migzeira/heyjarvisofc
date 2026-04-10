@@ -11,7 +11,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
 import {
   Save, Clock, CheckCircle, XCircle, Info, Smartphone, Lock, AlertTriangle,
+  Crown, ExternalLink, Calendar,
 } from "lucide-react";
+import { format } from "date-fns";
+import { ptBR } from "date-fns/locale";
 
 // ─────────────────────────────────────────────
 // Constants
@@ -169,9 +172,19 @@ export default function MeuPerfil() {
   // Locked: already set a number AND exhausted change allowance
   const isPhoneLocked = storedPhone !== null && changesCount >= MAX_PHONE_CHANGES;
 
+  // Plan gate: só pode cadastrar/editar WhatsApp se tiver plano ativo
+  const hasActivePlan = profile?.account_status === "active";
+  const isPhoneBlockedByPlan = !hasActivePlan;
+
   // ── Save ──
   const handleSave = async () => {
     if (!profile) return;
+
+    // Plan gate: sem plano ativo não pode cadastrar/trocar telefone
+    if (isPhoneBlockedByPlan && isPhoneChanging) {
+      toast.error("Assine um plano para cadastrar seu WhatsApp.");
+      return;
+    }
 
     // If trying to change a locked phone → block
     if (isPhoneLocked && isPhoneChanging) {
@@ -195,18 +208,13 @@ export default function MeuPerfil() {
         ? changesCount + 1
         : changesCount;
 
-      // Determine account_status
-      // - Has number + was pending → activate
-      // - Has number + already active → keep active
-      // - Number cleared → will be set to pending by DB trigger
-      const shouldActivate = !!newPhone && profile.account_status === "pending";
-
+      // NÃO altera account_status aqui — isso é função do admin ou Kirvano webhook.
+      // O trigger sync_account_status_on_phone_change só reverte pra pending se limpar o número.
       const { error } = await supabase.from("profiles").update({
         display_name: profile.display_name?.trim() || null,
         phone_number: newPhone,
         timezone: profile.timezone,
         phone_changes_count: newChangesCount,
-        ...(shouldActivate && { account_status: "active" }),
       }).eq("id", user!.id);
 
       if (error) {
@@ -219,17 +227,16 @@ export default function MeuPerfil() {
         ...profile,
         phone_number: newPhone,
         phone_changes_count: newChangesCount,
-        ...(shouldActivate && { account_status: "active" }),
         ...(!newPhone && { account_status: "pending" }),
       };
       setProfile(updatedProfile);
 
-      if (shouldActivate) {
-        toast.success("🎉 Número salvo! A Maya já pode responder no seu WhatsApp.");
-      } else if (isRealChange && newPhone) {
+      if (isRealChange && newPhone) {
         const remaining = MAX_PHONE_CHANGES - newChangesCount;
         if (remaining <= 0) {
-          toast.success("Número atualizado! ⚠️ Este foi seu último ajuste permitido.");
+          toast.success("Número salvo! ⚠️ Este foi seu último ajuste permitido.");
+        } else if (!storedPhone) {
+          toast.success("🎉 Número salvo! A Maya já pode responder no seu WhatsApp.");
         } else {
           toast.success(`Número atualizado! Você ainda pode alterá-lo mais ${remaining} vez${remaining === 1 ? "" : "es"}.`);
         }
@@ -243,6 +250,18 @@ export default function MeuPerfil() {
     }
   };
 
+  // ── Plan label helpers ──
+  const planLabel = (() => {
+    const plan = profile?.plan ?? "";
+    if (plan === "maya_anual") return "Anual";
+    if (plan === "maya_mensal") return "Mensal";
+    return plan || "Sem plano";
+  })();
+  const accessUntilDate = profile?.access_until ? new Date(profile.access_until) : null;
+  const daysLeft = accessUntilDate
+    ? Math.max(0, Math.ceil((accessUntilDate.getTime() - Date.now()) / 86400000))
+    : null;
+
   if (loading) return <Skeleton className="h-64 max-w-lg" />;
   if (!profile) return null;
 
@@ -255,6 +274,56 @@ export default function MeuPerfil() {
         <h1 className="text-2xl font-bold">Meu Perfil</h1>
         <StatusBadge status={profile.account_status} />
       </div>
+
+      {/* ── Seu plano ── */}
+      <Card className={`border-2 ${
+        hasActivePlan
+          ? "border-violet-500/40 bg-violet-500/5"
+          : "border-muted bg-muted/20"
+      }`}>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Crown className={`h-5 w-5 ${hasActivePlan ? "text-violet-400" : "text-muted-foreground"}`} />
+            Seu plano
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div>
+              <p className="text-lg font-bold">{planLabel}</p>
+              {hasActivePlan && accessUntilDate && (
+                <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
+                  <Calendar className="h-3 w-3" />
+                  {daysLeft === 0 ? "Expira hoje" : `Expira em ${daysLeft} dia${daysLeft !== 1 ? "s" : ""}`}
+                  {" — "}
+                  {format(accessUntilDate, "dd/MM/yyyy", { locale: ptBR })}
+                </p>
+              )}
+              {hasActivePlan && !accessUntilDate && (
+                <p className="text-xs text-green-400 flex items-center gap-1 mt-0.5">
+                  <CheckCircle className="h-3 w-3" /> Assinatura ativa
+                </p>
+              )}
+              {!hasActivePlan && (
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {profile.account_status === "suspended"
+                    ? "Acesso suspenso"
+                    : "Sem plano ativo — assine para usar a Maya"}
+                </p>
+              )}
+            </div>
+            <StatusBadge status={profile.account_status} />
+          </div>
+          {!hasActivePlan && (
+            <a href="https://minhamaya.com" target="_blank" rel="noopener noreferrer" className="block">
+              <Button className="w-full gap-2" variant="default">
+                <ExternalLink className="h-4 w-4" />
+                Ver planos
+              </Button>
+            </a>
+          )}
+        </CardContent>
+      </Card>
 
       {/* ── Dados pessoais ── */}
       <Card className="bg-card border-border">
@@ -313,8 +382,26 @@ export default function MeuPerfil() {
         </CardHeader>
         <CardContent className="space-y-3">
 
+          {/* Plan gate — bloqueia cadastro sem plano ativo */}
+          {isPhoneBlockedByPlan && (
+            <div className="flex items-start gap-2 p-3 rounded-lg bg-violet-500/10 border border-violet-500/30 text-sm text-violet-200">
+              <Lock className="h-4 w-4 shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <p className="font-semibold text-violet-100">Assine um plano para cadastrar seu WhatsApp</p>
+                <p className="mt-0.5 text-violet-300/80 text-xs">
+                  Você precisa de uma assinatura ativa (mensal ou anual) para que a Maya possa responder no seu número.
+                </p>
+                <a href="https://minhamaya.com" target="_blank" rel="noopener noreferrer" className="inline-block mt-2">
+                  <Button size="sm" variant="outline" className="h-8 text-xs border-violet-500/40 text-violet-200 hover:bg-violet-500/20">
+                    <ExternalLink className="mr-1 h-3 w-3" /> Ver planos
+                  </Button>
+                </a>
+              </div>
+            </div>
+          )}
+
           {/* Status messages */}
-          {!profile.phone_number && (
+          {!profile.phone_number && !isPhoneBlockedByPlan && (
             <div className="flex items-start gap-2 p-3 rounded-lg bg-muted/60 border border-border text-sm text-muted-foreground">
               <Info className="h-4 w-4 shrink-0 mt-0.5 text-primary" />
               <div>
@@ -367,9 +454,9 @@ export default function MeuPerfil() {
             <Select
               value={selectedDdi}
               onValueChange={v => { setSelectedDdi(v); setLocalNumber(""); }}
-              disabled={isPhoneLocked}
+              disabled={isPhoneLocked || isPhoneBlockedByPlan}
             >
-              <SelectTrigger className={isPhoneLocked ? "opacity-50 cursor-not-allowed" : ""}>
+              <SelectTrigger className={(isPhoneLocked || isPhoneBlockedByPlan) ? "opacity-50 cursor-not-allowed" : ""}>
                 <div className="flex items-center gap-2 flex-1 min-w-0">
                   <FlagImg code={selectedCountry.code} />
                   <span className="font-mono text-muted-foreground">+{selectedCountry.ddi}</span>
@@ -406,8 +493,8 @@ export default function MeuPerfil() {
                   setLocalNumber(raw);
                 }}
                 placeholder={selectedCountry.placeholder}
-                disabled={isPhoneLocked}
-                className={`font-mono flex-1 ${isPhoneLocked ? "opacity-50 cursor-not-allowed" : ""}`}
+                disabled={isPhoneLocked || isPhoneBlockedByPlan}
+                className={`font-mono flex-1 ${(isPhoneLocked || isPhoneBlockedByPlan) ? "opacity-50 cursor-not-allowed" : ""}`}
                 inputMode="numeric"
                 maxLength={selectedDdi === "55" ? 15 : 18}
               />
@@ -438,7 +525,7 @@ export default function MeuPerfil() {
       <Button
         onClick={handleSave}
         className="w-full"
-        disabled={saving || (localDigits.length > 0 && !isValidLocal)}
+        disabled={saving || (localDigits.length > 0 && !isValidLocal) || (isPhoneBlockedByPlan && isPhoneChanging)}
       >
         <Save className="mr-2 h-4 w-4" />
         {saving ? "Salvando..." : "Salvar"}

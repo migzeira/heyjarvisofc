@@ -11,6 +11,7 @@ import {
   Wallet, CalendarDays, StickyNote, Settings, BarChart3, Link2,
   TrendingDown, BookOpen, Bell, BellRing, Plus, ChevronRight,
   MessageSquare, Clock, Zap, Smartphone, AlertTriangle, XCircle, ExternalLink,
+  X, Lock,
 } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { toast } from "sonner";
@@ -110,6 +111,19 @@ export default function DashboardHome() {
   const [recentActivity, setRecentActivity] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
+
+  // Banner dismiss state (session-only — reset no reload)
+  const [dismissedBanners, setDismissedBanners] = useState<Set<string>>(new Set());
+  const dismissBanner = (key: string) => setDismissedBanners(prev => new Set([...prev, key]));
+
+  // Onboarding widget dismissal (persist em localStorage)
+  const [onboardingDismissed, setOnboardingDismissed] = useState<boolean>(
+    () => typeof window !== "undefined" && !!localStorage.getItem("maya_onboarding_dismissed_v1")
+  );
+  const dismissOnboarding = () => {
+    localStorage.setItem("maya_onboarding_dismissed_v1", "1");
+    setOnboardingDismissed(true);
+  };
 
   useEffect(() => {
     if (!user) return;
@@ -250,6 +264,7 @@ export default function DashboardHome() {
   const accountStatus = profile?.account_status;
   const accessUntil = profile?.access_until ? new Date(profile.access_until) : null;
   const isSuspended = accountStatus === "suspended";
+  const isPending = accountStatus === "pending";
   const isCancelling = accountStatus === "active" && accessUntil && accessUntil > new Date();
   const isExpired = accountStatus === "active" && accessUntil && accessUntil <= new Date();
   const daysLeft = accessUntil ? Math.max(0, Math.ceil((accessUntil.getTime() - Date.now()) / 86400000)) : null;
@@ -257,23 +272,52 @@ export default function DashboardHome() {
   return (
     <div className="space-y-6">
 
-      {/* ── Subscription status banner ── */}
-      {isSuspended && (
+      {/* ── Subscription status banners (com X pra fechar até reload) ── */}
+      {isSuspended && !dismissedBanners.has("suspended") && (
         <div className="flex items-center gap-3 p-4 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300">
           <XCircle className="h-5 w-5 shrink-0" />
           <div className="flex-1 min-w-0">
             <p className="text-sm font-semibold">Acesso suspenso</p>
             <p className="text-xs text-red-400 mt-0.5">Sua conta foi suspensa por estorno ou reembolso. Renove para reativar o assistente.</p>
           </div>
-          <a href="https://minhamaya.com" target="_blank" rel="noopener noreferrer">
-            <button className="shrink-0 text-xs font-medium bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-200 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors">
+          <a href="https://minhamaya.com" target="_blank" rel="noopener noreferrer" className="shrink-0 mr-2">
+            <button className="text-xs font-medium bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-200 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors">
               <ExternalLink className="h-3.5 w-3.5" /> Renovar
             </button>
           </a>
+          <button
+            onClick={() => dismissBanner("suspended")}
+            aria-label="Fechar aviso"
+            className="shrink-0 p-1 rounded-md hover:bg-red-500/20 text-red-300/70 hover:text-red-200 transition-colors"
+          >
+            <X className="h-4 w-4" />
+          </button>
         </div>
       )}
 
-      {isCancelling && daysLeft !== null && (
+      {isPending && !dismissedBanners.has("pending") && (
+        <div className="flex items-center gap-3 p-4 rounded-xl bg-violet-500/10 border border-violet-500/30 text-violet-200">
+          <Lock className="h-5 w-5 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold">Assine um plano para começar</p>
+            <p className="text-xs text-violet-300/80 mt-0.5">Sua conta está sem plano ativo. Assine para cadastrar seu WhatsApp e usar a Maya.</p>
+          </div>
+          <a href="https://minhamaya.com" target="_blank" rel="noopener noreferrer" className="shrink-0 mr-2">
+            <button className="text-xs font-medium bg-violet-500/20 hover:bg-violet-500/30 border border-violet-500/40 text-violet-100 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors">
+              <ExternalLink className="h-3.5 w-3.5" /> Ver planos
+            </button>
+          </a>
+          <button
+            onClick={() => dismissBanner("pending")}
+            aria-label="Fechar aviso"
+            className="shrink-0 p-1 rounded-md hover:bg-violet-500/20 text-violet-300/70 hover:text-violet-100 transition-colors"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
+      {isCancelling && daysLeft !== null && !dismissedBanners.has("cancelling") && (
         <div className="flex items-center gap-3 p-4 rounded-xl bg-yellow-500/10 border border-yellow-500/30 text-yellow-300">
           <AlertTriangle className="h-5 w-5 shrink-0" />
           <div className="flex-1 min-w-0">
@@ -283,34 +327,55 @@ export default function DashboardHome() {
               {accessUntil!.toLocaleDateString("pt-BR")}. Após essa data o assistente será desativado.
             </p>
           </div>
-          <a href="https://minhamaya.com" target="_blank" rel="noopener noreferrer">
-            <button className="shrink-0 text-xs font-medium bg-yellow-500/20 hover:bg-yellow-500/30 border border-yellow-500/40 text-yellow-200 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors">
+          <a href="https://minhamaya.com" target="_blank" rel="noopener noreferrer" className="shrink-0 mr-2">
+            <button className="text-xs font-medium bg-yellow-500/20 hover:bg-yellow-500/30 border border-yellow-500/40 text-yellow-200 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors">
               <ExternalLink className="h-3.5 w-3.5" /> Renovar
             </button>
           </a>
+          <button
+            onClick={() => dismissBanner("cancelling")}
+            aria-label="Fechar aviso"
+            className="shrink-0 p-1 rounded-md hover:bg-yellow-500/20 text-yellow-300/70 hover:text-yellow-200 transition-colors"
+          >
+            <X className="h-4 w-4" />
+          </button>
         </div>
       )}
 
-      {isExpired && (
+      {isExpired && !dismissedBanners.has("expired") && (
         <div className="flex items-center gap-3 p-4 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300">
           <XCircle className="h-5 w-5 shrink-0" />
           <div className="flex-1 min-w-0">
             <p className="text-sm font-semibold">Assinatura expirada</p>
             <p className="text-xs text-red-400 mt-0.5">Seu período de acesso chegou ao fim. Renove para voltar a usar a Maya.</p>
           </div>
-          <a href="https://minhamaya.com" target="_blank" rel="noopener noreferrer">
-            <button className="shrink-0 text-xs font-medium bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-200 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors">
+          <a href="https://minhamaya.com" target="_blank" rel="noopener noreferrer" className="shrink-0 mr-2">
+            <button className="text-xs font-medium bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-200 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors">
               <ExternalLink className="h-3.5 w-3.5" /> Renovar
             </button>
           </a>
+          <button
+            onClick={() => dismissBanner("expired")}
+            aria-label="Fechar aviso"
+            className="shrink-0 p-1 rounded-md hover:bg-red-500/20 text-red-300/70 hover:text-red-200 transition-colors"
+          >
+            <X className="h-4 w-4" />
+          </button>
         </div>
       )}
 
       {/* ── Onboarding banner (novos usuários) ── */}
-      {showOnboarding && (
-        <Card className="bg-gradient-to-r from-violet-500/10 to-purple-500/10 border-violet-500/20">
+      {showOnboarding && !onboardingDismissed && (
+        <Card className="bg-gradient-to-r from-violet-500/10 to-purple-500/10 border-violet-500/20 relative">
+          <button
+            onClick={dismissOnboarding}
+            aria-label="Fechar tutorial"
+            className="absolute top-2 right-2 p-1.5 rounded-md hover:bg-violet-500/20 text-violet-300/70 hover:text-violet-200 transition-colors"
+          >
+            <X className="h-4 w-4" />
+          </button>
           <CardContent className="pt-5 pb-5">
-            <h3 className="text-base font-bold mb-3 flex items-center gap-2">
+            <h3 className="text-base font-bold mb-3 flex items-center gap-2 pr-8">
               🚀 Configure sua Maya em 3 passos
             </h3>
             <div className="space-y-3">

@@ -94,7 +94,6 @@ export default function AdminPanel() {
   const [settings, setSettings] = useState<Record<string, { value: string; configured: boolean }>>({});
   const [settingsForm, setSettingsForm] = useState<Record<string, string>>({});
   const [savingSettings, setSavingSettings] = useState(false);
-  const [approvingId, setApprovingId] = useState<string | null>(null);
 
   // Sparkline data
   const [dailyUsers, setDailyUsers] = useState<number[]>([]);
@@ -239,21 +238,8 @@ export default function AdminPanel() {
     } catch {}
   };
 
-  const approveUser = async (userId: string) => {
-    setApprovingId(userId);
-    const { error } = await (supabase.from("profiles").update({ account_status: "active" } as any).eq("id", userId) as any);
-    if (error) toast.error("Erro ao aprovar");
-    else { toast.success("Conta aprovada!"); await loadProfiles(); }
-    setApprovingId(null);
-  };
-
-  const rejectUser = async (userId: string) => {
-    setApprovingId(userId);
-    const { error } = await (supabase.from("profiles").update({ account_status: "suspended" } as any).eq("id", userId) as any);
-    if (error) toast.error("Erro ao rejeitar");
-    else { toast.success("Conta rejeitada."); await loadProfiles(); }
-    setApprovingId(null);
-  };
+  // Removido: approveUser/rejectUser — ativação agora é via UserDetailModal (Ativar Mensal/Anual/período).
+  // O botão "Gerenciar" na aba "Sem plano" abre o modal com todas as opções de ativação.
 
   const saveSettings = async () => {
     if (!session) return;
@@ -440,7 +426,7 @@ export default function AdminPanel() {
           <div className="flex items-center gap-3 mb-4 flex-wrap">
             <TabsList>
               <TabsTrigger value="pending" className="relative">
-                <Clock className="h-4 w-4 mr-1" />Pendentes
+                <Clock className="h-4 w-4 mr-1" />Sem plano
                 {stats.pendingUsers > 0 && (
                   <span className="ml-1.5 bg-yellow-500 text-black text-[10px] font-bold rounded-full px-1.5 py-0.5">{stats.pendingUsers}</span>
                 )}
@@ -462,17 +448,20 @@ export default function AdminPanel() {
             </TabsList>
           </div>
 
-          {/* PENDING */}
+          {/* SEM PLANO (antigo Pendentes) */}
           <TabsContent value="pending">
             <Card>
               <CardHeader>
                 <CardTitle className="text-base flex items-center gap-2">
-                  <Clock className="h-5 w-5 text-yellow-400" /> Contas aguardando aprovação
+                  <Clock className="h-5 w-5 text-yellow-400" /> Contas sem plano ativo
                 </CardTitle>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Usuários que criaram conta mas ainda não têm plano. Clique em Gerenciar para ativar (Mensal, Anual ou período de teste).
+                </p>
               </CardHeader>
               <CardContent>
                 {pendingProfiles.length === 0 ? (
-                  <p className="text-center text-muted-foreground py-8">Nenhuma conta pendente.</p>
+                  <p className="text-center text-muted-foreground py-8">Nenhuma conta sem plano no momento.</p>
                 ) : (
                   <Table>
                     <TableHeader><TableRow>
@@ -486,14 +475,13 @@ export default function AdminPanel() {
                           <TableCell><Badge variant="secondary">{p.plan}</Badge></TableCell>
                           <TableCell className="text-sm">{formatDate(p.created_at)}</TableCell>
                           <TableCell>
-                            <div className="flex gap-2">
-                              <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white" disabled={approvingId === p.id} onClick={() => approveUser(p.id)}>
-                                <CheckCircle className="h-3.5 w-3.5 mr-1" /> Aprovar
-                              </Button>
-                              <Button size="sm" variant="destructive" disabled={approvingId === p.id} onClick={() => rejectUser(p.id)}>
-                                <XCircle className="h-3.5 w-3.5 mr-1" /> Rejeitar
-                              </Button>
-                            </div>
+                            <Button
+                              size="sm"
+                              variant="default"
+                              onClick={() => { setSelectedUserId(p.id); setSelectedUserName(p.display_name || "Usuário"); }}
+                            >
+                              <Eye className="h-3.5 w-3.5 mr-1" /> Gerenciar
+                            </Button>
                           </TableCell>
                         </TableRow>
                       ))}

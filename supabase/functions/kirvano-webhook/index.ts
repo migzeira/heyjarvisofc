@@ -303,9 +303,11 @@ async function processEvent(kData: KirvanoData): Promise<void> {
 
   if (!userId) {
     // Usuário ainda não tem conta na Maya.
-    // A função handle_new_user vai detectar o evento pending quando ele se registrar.
+    // O evento fica gravado em kirvano_events. Quando ele criar conta com este
+    // email, o trigger handle_new_user vai buscar este evento (status='activate',
+    // matched_user_id IS NULL) e auto-ativar a conta com o plano correto.
     console.log(
-      `[kirvano] ℹ️ No user yet for email="${kData.email}" event="${kData.event}" — will activate on registration`
+      `[kirvano] ℹ️ No user yet for email="${kData.email}" event="${kData.event}" — event stored, will activate on registration via handle_new_user trigger`
     );
     return;
   }

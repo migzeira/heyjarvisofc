@@ -220,6 +220,22 @@ export default function UserDetailModal({ userId, userName, open, onClose, onPro
     }
   };
 
+  // Ativação direta de plano Mensal ou Anual — seta plan + access_until
+  const handleActivatePlan = async (plan: "maya_mensal" | "maya_anual", days: number) => {
+    const accessUntil = addDays(new Date(), days).toISOString();
+    const { error } = await (supabase.from("profiles").update({
+      account_status: "active",
+      plan,
+      access_until: accessUntil,
+    } as any).eq("id", userId) as any);
+    await supabase.from("agent_configs").update({ is_active: true } as any).eq("user_id", userId);
+    if (error) { toast.error("Erro ao ativar plano"); return; }
+    const label = plan === "maya_anual" ? "Anual" : "Mensal";
+    toast.success(`Plano ${label} ativado por ${days} dias!`);
+    setProfile((p: any) => ({ ...p, plan, account_status: "active", access_until: accessUntil }));
+    onProfileUpdate?.();
+  };
+
   const handleActivatePermanent = async () => {
     const { error } = await (supabase.from("profiles").update({
       account_status: "active",
@@ -292,9 +308,30 @@ export default function UserDetailModal({ userId, userName, open, onClose, onPro
             <div className="mb-4 p-3 rounded-lg border border-border bg-muted/30 space-y-3">
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Ações administrativas</p>
 
-              <div className="flex flex-wrap items-end gap-2">
+              {/* Ativar plano Mensal / Anual — atalhos rápidos */}
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs text-muted-foreground">Ativar plano:</span>
+                <Button
+                  size="sm"
+                  variant="default"
+                  className="h-8 text-xs bg-violet-600 hover:bg-violet-500"
+                  onClick={() => handleActivatePlan("maya_mensal", 30)}
+                >
+                  Mensal (+30d)
+                </Button>
+                <Button
+                  size="sm"
+                  variant="default"
+                  className="h-8 text-xs bg-violet-700 hover:bg-violet-600"
+                  onClick={() => handleActivatePlan("maya_anual", 365)}
+                >
+                  Anual (+365d)
+                </Button>
+              </div>
+
+              <div className="flex flex-wrap items-end gap-2 pt-2 border-t border-border">
                 <div className="space-y-1">
-                  <Label className="text-xs">Ativar por N dias</Label>
+                  <Label className="text-xs">Período teste / bônus (N dias)</Label>
                   <div className="flex gap-2">
                     <Input
                       type="number"
@@ -305,7 +342,7 @@ export default function UserDetailModal({ userId, userName, open, onClose, onPro
                       className="w-24 h-8 text-sm"
                     />
                     <Button size="sm" className="h-8" onClick={handleActivateWithPeriod}>
-                      Ativar período
+                      Liberar
                     </Button>
                   </div>
                 </div>
