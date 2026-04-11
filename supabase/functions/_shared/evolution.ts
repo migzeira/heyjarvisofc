@@ -121,23 +121,28 @@ export async function sendText(to: string, text: string): Promise<void> {
   let number: string;
 
   if (to.endsWith("@lid")) {
-    // LID não é aceito direto pelo sendText do Evolution v1.8 —
+    // LID não é aceito direto pelo sendText do Evolution —
     // tenta resolver para telefone real via contact store
     const resolved = await resolveLidToPhone(to);
-    number = resolved ? normalizePhone(resolved) : to;
+    if (resolved) {
+      number = normalizePhone(resolved);
+    } else {
+      // Se não conseguiu resolver LID, tenta usar direto como fallback
+      // (pode ser que Evolution aceite em algumas versões)
+      number = to;
+    }
   } else if (to.includes("@")) {
     // JID @s.whatsapp.net — usa direto
     number = to;
   } else {
+    // Número puro — normaliza
     number = normalizePhone(to);
   }
 
-  console.log(`[sendText] Tentando enviar pra ${number}, EVOLUTION_URL=${EVOLUTION_URL}, INSTANCE=${INSTANCE}`);
   await evolutionPost(`/message/sendText/${INSTANCE}`, {
     number,
     textMessage: { text },
   });
-  console.log(`[sendText] Sucesso enviando pra ${number}`);
 }
 
 /**
