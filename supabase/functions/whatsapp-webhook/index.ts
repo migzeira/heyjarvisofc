@@ -3334,17 +3334,17 @@ async function handleReminderSet(
   }
 
   // ── Extrai intenção do lembrete com IA ──
-  // MAS PRIMEIRO: tenta detectar "daqui X minutos/horas" sem IA (mais rápido e preciso)
+  // MAS PRIMEIRO: tenta detectar "daqui X minutos/horas" ou "em X minutos/horas" sem IA (mais rápido e preciso)
   const msgNormLow = message.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-  const delayMatch = msgNormLow.match(/daqui\s+(\d+)\s*(minuto|minutos|min|hora|horas|h)\b|em\s+(\d+)\s*(minuto|minutos|min|hora|horas|h)\b/i);
+  const delayMatch = msgNormLow.match(/(?:daqui|em)\s+(\d+)\s*(minuto|minutos|min|hora|horas|h)\b/i);
 
   let parsed = null;
 
   if (delayMatch) {
-    // Conseguiu extrair "daqui X minutos/horas" — não precisa IA
-    const num = parseInt(delayMatch[1] || delayMatch[3]);
-    const unit = (delayMatch[2] || delayMatch[4]).toLowerCase();
-    const delayMs = (unit.startsWith("min") || unit === "min") ? num * 60000 : num * 3600000;
+    // Conseguiu extrair "daqui X minutos/horas" ou "em X minutos/horas" — não precisa IA
+    const num = parseInt(delayMatch[1]);
+    const unit = delayMatch[2].toLowerCase();
+    const delayMs = (unit === "min" || unit.startsWith("minuto")) ? num * 60000 : num * 3600000;
     const remindAtMs = Date.now() + delayMs;
     const remindAtDate = new Date(remindAtMs);
     const remindAtIso = remindAtDate.toLocaleString("sv-SE", {
@@ -3352,8 +3352,8 @@ async function handleReminderSet(
       hour12: false,
     }).replace(" ", "T") + getTzOffset(userTz);
 
-    // Extrai título do que sobrou da mensagem (remove "daqui X minutos/horas de")
-    const titlePart = message.replace(/daqui\s+\d+\s*(?:minuto|minutos|min|hora|horas|h)\s+(?:de\s+)?/i, "").trim();
+    // Extrai título do que sobrou da mensagem (remove "daqui/em X minutos/horas de")
+    const titlePart = message.replace(/(?:daqui|em)\s+\d+\s*(?:minuto|minutos|min|hora|horas|h)\s+(?:de\s+)?/i, "").trim();
 
     parsed = {
       title: titlePart.substring(0, 60) || "Lembrete",
