@@ -3355,6 +3355,8 @@ async function handleReminderSet(
     // Extrai título do que sobrou da mensagem (remove "daqui/em X minutos/horas de")
     const titlePart = message.replace(/(?:daqui|em)\s+\d+\s*(?:minuto|minutos|min|hora|horas|h)\s+(?:de\s+)?/i, "").trim();
 
+    console.log(`[DEBUG] Reminder pre-parsed: delay=${num}${unit}, remindAt=${remindAtIso}, title=${titlePart}`);
+
     parsed = {
       title: titlePart.substring(0, 60) || "Lembrete",
       message: `⏰ ${titlePart}`,
@@ -3364,6 +3366,7 @@ async function handleReminderSet(
     };
   } else {
     // Precisa usar IA para parsing
+    console.log(`[DEBUG] No delay match found, using AI parsing`);
     parsed = await parseReminderIntent(message, nowIso, lang);
   }
 
@@ -3460,6 +3463,8 @@ async function saveReminder(
     };
   }
 
+  console.log(`[DEBUG] Saving reminder: title=${parsed.title}, send_at=${remindAt.toISOString()}, status=pending`);
+
   const { error } = await supabase.from("reminders").insert({
     user_id: userId,
     whatsapp_number: phone,
@@ -3472,7 +3477,12 @@ async function saveReminder(
     status: "pending",
   });
 
-  if (error) throw error;
+  if (error) {
+    console.error(`[ERROR] Failed to insert reminder: ${error.message}`);
+    throw error;
+  }
+
+  console.log(`[DEBUG] Reminder saved successfully`);
 
   const locale = langToLocale(lang);
   const dateRaw = remindAt.toLocaleDateString(locale, {
