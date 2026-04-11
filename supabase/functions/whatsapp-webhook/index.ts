@@ -5277,11 +5277,11 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
 
     // Fallback adicional: busca em user_phone_numbers (múltiplos números - plano business)
     if (!profile) {
-      const rawPhone = replyTo
+      const rawPhoneExtra = replyTo
         .replace(/@s\.whatsapp\.net$/, "")
         .replace(/@lid$/, "")
         .replace(/:\d+$/, "");
-      const phone = sanitizePhone(rawPhone);
+      const phone = sanitizePhone(rawPhoneExtra);
       if (phone) {
         const { data: extraNum } = await supabase
           .from("user_phone_numbers")
