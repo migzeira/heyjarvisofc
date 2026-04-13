@@ -216,13 +216,13 @@ export function classifyIntent(msg: string): Intent {
     return "agenda_query";
 
   // Listar notas/anotações
-  // "quais são minhas anotações", "mostra minhas notas", "me fala minhas anotações"
+  // Após NFD normalize: "anotações" → "anotacoes", "anotação" → "anotacao"
+  // Usa "anotac" (prefixo) sem \b no final — "anotac" matcha "anotacao" e "anotacoes"
   if (
-    /\b(quais|mostra(r)?|lista(r)?|ver|veja|mostre|me fala|me mostra)\s+(s[ãa]o\s+)?(as\s+|minhas\s+|de\s+)?anota(c[oõ]|ç[oõ])es?\b/.test(m) ||
-    /\b(quais|mostra(r)?|lista(r)?|ver|veja|mostre|me fala|me mostra)\s+(s[ãa]o\s+)?(as\s+|minhas\s+|de\s+)?notas?\b/.test(m) ||
-    /^(minhas\s+)?(anota(c[oõ]|ç[oõ])es?|notas)\s*\??$/.test(m) ||
-    /\bminhas (anota(c[oõ]|ç[oõ])es?|notas)\b/.test(m) ||
-    /\b(tenho|tem)\s+(alguma|quantas?)\s+(anota(c[oõ]|ç[oõ])es?|notas)\b/.test(m)
+    /\b(quais|mostra|mostrar|lista|listar|ver|veja|mostre|me fala|me mostra|me diz)\b.{0,25}(anotac|notas?)/.test(m) ||
+    /\bminhas?\s+(anotac|notas)/.test(m) ||
+    /^(minhas?\s+)?(anotac\w*|notas)\s*\??$/.test(m) ||
+    /\b(tenho|tem)\s+.{0,15}(anotac|notas?)/.test(m)
   )
     return "notes_list";
 
