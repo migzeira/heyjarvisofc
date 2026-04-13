@@ -1523,18 +1523,14 @@ async function handleNotesList(userId: string): Promise<string> {
     const dateStr = new Date(n.created_at).toLocaleDateString("pt-BR", { day: "numeric", month: "short" });
     const sourceBadge = (n.source === "whatsapp" || n.source === "whatsapp_forward") ? " 📱" : "";
 
-    // Mostra título se tiver, senão mostra conteúdo (até 200 chars pra notas longas)
     let display = "";
     if (n.title) {
       display = `*${n.title}*`;
-      // Se tem conteúdo diferente do título, mostra preview abaixo
       if (n.content && n.content !== n.title) {
-        const preview = n.content.slice(0, 200).replace(/\n/g, " ");
-        display += `\n   ${preview}${n.content.length > 200 ? "..." : ""}`;
+        display += `\n${n.content}`;
       }
     } else if (n.content) {
-      const preview = n.content.slice(0, 200);
-      display = preview + (n.content.length > 200 ? "..." : "");
+      display = n.content;
     } else {
       display = "_Sem conteúdo_";
     }
