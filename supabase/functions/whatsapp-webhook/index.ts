@@ -3673,9 +3673,11 @@ async function handleReminderCancel(
       : "📭 Você não tem lembretes pendentes para cancelar.";
   }
 
+  // Helper local: formata lista de lembretes pendentes (evita redeclarar const)
+  const fmtPendingList = () => reminders.slice(0, 4).map(r => `• ${r.title || r.message.slice(0, 40)}`).join("\n");
+
   if (!searchTerm) {
-    const list = reminders.slice(0, 4).map(r => `• ${r.title || r.message.slice(0, 40)}`).join("\n");
-    return `Qual lembrete quer cancelar? Seus lembretes pendentes:\n\n${list}\n\nEx: _"cancela o lembrete de pagar aluguel"_`;
+    return `Qual lembrete quer cancelar? Seus lembretes pendentes:\n\n${fmtPendingList()}\n\nEx: _"cancela o lembrete de pagar aluguel"_`;
   }
 
   // Busca melhor match por similaridade de texto
@@ -3685,8 +3687,7 @@ async function handleReminderCancel(
   });
 
   if (!match) {
-    const list = reminders.slice(0, 4).map(r => `• ${r.title || r.message.slice(0, 40)}`).join("\n");
-    return `Não encontrei esse lembrete. Seus pendentes:\n\n${list}\n\nTente o nome exato.`;
+    return `Não encontrei esse lembrete. Seus pendentes:\n\n${fmtPendingList()}\n\nTente o nome exato.`;
   }
 
   // Cancela este e todas as recorrências futuras com o mesmo título
@@ -5066,9 +5067,9 @@ async function processImageMessage(
     }
 
     // Determina o destino válido para TODAS as respostas
-    const rawPhone = profile.phone_number?.replace(/\D/g, "") ?? "";
-    const sendPhone = rawPhone || phone;
-    const sessionId = rawPhone || phone;
+    const profilePhone = profile.phone_number?.replace(/\D/g, "") ?? "";
+    const sendPhone = profilePhone || phone;
+    const sessionId = profilePhone || phone;
 
     // 3. Extrai com Vision (com profile já resolvido)
     const extraction = await extractStatementFromImage(base64, mimetype, caption);
@@ -5257,36 +5258,30 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       profile = data;
     }
 
-    if (!profile) {
+    // Extrai phone UMA vez pra reusar nos fallbacks abaixo (evita redeclarar const)
+    const fallbackRawPhone = replyTo
+      .replace(/@s\.whatsapp\.net$/, "")
+      .replace(/@lid$/, "")
+      .replace(/:\d+$/, "");
+    const fallbackPhone = sanitizePhone(fallbackRawPhone);
+
+    if (!profile && fallbackPhone) {
       // Fallback: tenta por telefone (@s.whatsapp.net ou @lid → extrai dígitos)
-      // Sanitizado pra digits-only, previne PostgREST injection em .or()
-      const rawPhone = replyTo
-        .replace(/@s\.whatsapp\.net$/, "")
-        .replace(/@lid$/, "")
-        .replace(/:\d+$/, "");
-      const phone = sanitizePhone(rawPhone);
-      if (phone) {
-        const { data } = await supabase
-          .from("profiles")
-          .select("id, plan, messages_used, messages_limit, phone_number, account_status, timezone, access_until, display_name")
-          .or(`phone_number.eq.${phone},phone_number.eq.+${phone}`)
-          .maybeSingle();
-        profile = data;
-      }
+      const { data } = await supabase
+        .from("profiles")
+        .select("id, plan, messages_used, messages_limit, phone_number, account_status, timezone, access_until, display_name")
+        .or(`phone_number.eq.${fallbackPhone},phone_number.eq.+${fallbackPhone}`)
+        .maybeSingle();
+      profile = data;
     }
 
     // Fallback adicional: busca em user_phone_numbers (múltiplos números - plano business)
-    if (!profile) {
-      const rawPhone = replyTo
-        .replace(/@s\.whatsapp\.net$/, "")
-        .replace(/@lid$/, "")
-        .replace(/:\d+$/, "");
-      const phone = sanitizePhone(rawPhone);
-      if (phone) {
+    if (!profile && fallbackPhone) {
+      {
         const { data: extraNum } = await supabase
           .from("user_phone_numbers")
           .select("user_id")
-          .or(`phone_number.eq.${phone},phone_number.eq.+${phone}`)
+          .or(`phone_number.eq.${fallbackPhone},phone_number.eq.+${fallbackPhone}`)
           .maybeSingle();
         if (extraNum?.user_id) {
           const { data } = await supabase
