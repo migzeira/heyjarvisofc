@@ -828,29 +828,91 @@ async function handleFinanceRecord(
   // "Hoje" no fuso do usuário (usa profile.timezone — default São Paulo como fallback)
   const todayUserTz = new Date().toLocaleDateString("sv-SE", { timeZone: userTz });
 
-  const inserts = transactions.map((t) => ({
-    user_id: userId,
-    description: t.description,
-    amount: t.amount,
-    type: t.type,
-    category: t.category,
-    source: "whatsapp",
-    transaction_date: todayUserTz,
-  }));
+  // ── Separa transações normais das parceladas ──
+  const normalTxs = transactions.filter(t => !t.installments || t.installments < 2);
+  const installmentTxs = transactions.filter(t => t.installments && t.installments >= 2 && t.installments <= 48);
 
-  const { error, data: insertedRows } = await supabase.from("transactions").insert(inserts).select("id, user_id, transaction_date");
-  console.log(`[finance_record] userId=${userId} todayUserTz=${todayUserTz} tz=${userTz} inserted=${JSON.stringify(insertedRows)} error=${JSON.stringify(error)}`);
-  if (error) throw error;
-
-  // Sync Google Sheets (fire-and-forget, sem bloquear resposta) — mesma data do registro
-  for (const t of transactions) {
-    syncGoogleSheets(userId, {
-      date: todayUserTz,
+  // ── INSERT transações normais (comportamento original inalterado) ──
+  if (normalTxs.length > 0) {
+    const inserts = normalTxs.map((t) => ({
+      user_id: userId,
       description: t.description,
       amount: t.amount,
       type: t.type,
       category: t.category,
-    }).catch(() => {}); // ignora erros de sync
+      source: "whatsapp",
+      transaction_date: todayUserTz,
+    }));
+
+    const { error } = await supabase.from("transactions").insert(inserts);
+    if (error) throw error;
+
+    // Sync Google Sheets (fire-and-forget)
+    for (const t of normalTxs) {
+      syncGoogleSheets(userId, {
+        date: todayUserTz,
+        description: t.description,
+        amount: t.amount,
+        type: t.type,
+        category: t.category,
+      }).catch(() => {});
+    }
+  }
+
+  // ── INSERT transações PARCELADAS ──
+  const installmentResponses: string[] = [];
+  for (const t of installmentTxs) {
+    const numInstallments = t.installments!;
+    const perInstallment = Math.round((t.amount / numInstallments) * 100) / 100;
+    const group = crypto.randomUUID();
+
+    const inserts = [];
+    const monthNames: string[] = [];
+    for (let i = 0; i < numInstallments; i++) {
+      const d = new Date(todayUserTz + "T12:00:00");
+      d.setDate(1); // vai pro dia 1 pra evitar overflow de mês
+      d.setMonth(d.getMonth() + i);
+      // Volta pro dia original (ou último dia do mês se não existir)
+      const originalDay = new Date(todayUserTz + "T12:00:00").getDate();
+      const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+      d.setDate(Math.min(originalDay, lastDay));
+      const futureDate = d.toISOString().split("T")[0];
+
+      inserts.push({
+        user_id: userId,
+        description: `${t.description} (${i + 1}/${numInstallments})`,
+        amount: perInstallment,
+        type: t.type,
+        category: t.category,
+        source: "whatsapp",
+        transaction_date: futureDate,
+        installment_group: group,
+        installment_number: i + 1,
+        installment_total: numInstallments,
+      });
+
+      monthNames.push(d.toLocaleDateString("pt-BR", { month: "short" }).replace(".", ""));
+    }
+
+    const { error } = await (supabase.from("transactions").insert(inserts) as any);
+    if (error) throw error;
+
+    // Sync Google Sheets da primeira parcela
+    syncGoogleSheets(userId, {
+      date: todayUserTz,
+      description: `${t.description} (1/${numInstallments})`,
+      amount: perInstallment,
+      type: t.type,
+      category: t.category,
+    }).catch(() => {});
+
+    installmentResponses.push(
+      `💳 *Compra parcelada registrada!*\n\n` +
+      `📝 ${t.description}\n` +
+      `💰 Total: R$ ${t.amount.toFixed(2).replace(".", ",")}\n` +
+      `🔢 ${numInstallments}x de R$ ${perInstallment.toFixed(2).replace(".", ",")}\n` +
+      `📅 ${monthNames[0]} a ${monthNames[monthNames.length - 1]}`
+    );
   }
 
   // ── Verifica orçamentos e envia alertas proativos (fire-and-forget) ──
@@ -858,40 +920,56 @@ async function handleFinanceRecord(
     console.error("[budget-alert] Error:", err)
   );
 
-  if (transactions.length === 1) {
-    const t = transactions[0];
-    const tpl = t.type === "expense"
-      ? (config?.template_expense as string) ?? "🔴 *Gasto registrado{{name_tag}}!*\n📝 {{description}}\n💰 R$ {{amount}}"
-      : (config?.template_income as string) ?? "🟢 *Receita registrada{{name_tag}}!*\n📝 {{description}}\n💰 R$ {{amount}}";
-    const nick = (config?.user_nickname as string) || "";
-    return applyTemplate(tpl, {
-      description: t.description,
-      amount: t.amount.toFixed(2).replace(".", ","),
-      category: t.category,
-      type: t.type,
-      user_name: nick,
-      name_tag: nick ? `, ${nick}` : "",
+  // ── Monta resposta ──
+  // Se tem SÓ parcelas e nenhuma normal → resposta de parcela
+  if (normalTxs.length === 0 && installmentResponses.length > 0) {
+    return installmentResponses.join("\n\n");
+  }
+
+  // Se tem SÓ normais e nenhuma parcela → resposta original
+  if (installmentResponses.length === 0) {
+    if (normalTxs.length === 1) {
+      const t = normalTxs[0];
+      const tpl = t.type === "expense"
+        ? (config?.template_expense as string) ?? "🔴 *Gasto registrado{{name_tag}}!*\n📝 {{description}}\n💰 R$ {{amount}}"
+        : (config?.template_income as string) ?? "🟢 *Receita registrada{{name_tag}}!*\n📝 {{description}}\n💰 R$ {{amount}}";
+      const nick = (config?.user_nickname as string) || "";
+      return applyTemplate(tpl, {
+        description: t.description,
+        amount: t.amount.toFixed(2).replace(".", ","),
+        category: t.category,
+        type: t.type,
+        user_name: nick,
+        name_tag: nick ? `, ${nick}` : "",
+      });
+    }
+
+    const lines = normalTxs.map((t) => {
+      const emoji = t.type === "expense" ? "🔴" : "🟢";
+      return `${emoji} ${t.description}: *R$ ${t.amount.toFixed(2).replace(".", ",")}*`;
+    });
+    const total = normalTxs
+      .filter((t) => t.type === "expense")
+      .reduce((s, t) => s + t.amount, 0);
+
+    const tplMulti = (config?.template_expense_multi as string)
+      ?? "✅ *{{count}} gastos registrados{{name_tag}}!*\n\n{{lines}}\n\n💸 *Total: R$ {{total}}*";
+
+    const nickMulti = (config?.user_nickname as string) || "";
+    return applyTemplate(tplMulti, {
+      count: String(normalTxs.length),
+      lines: lines.join("\n"),
+      total: total.toFixed(2).replace(".", ","),
+      name_tag: nickMulti ? `, ${nickMulti}` : "",
     });
   }
 
-  const lines = transactions.map((t) => {
+  // Mix de parcelas + normais → combina as respostas
+  const normalLine = normalTxs.map((t) => {
     const emoji = t.type === "expense" ? "🔴" : "🟢";
     return `${emoji} ${t.description}: *R$ ${t.amount.toFixed(2).replace(".", ",")}*`;
-  });
-  const total = transactions
-    .filter((t) => t.type === "expense")
-    .reduce((s, t) => s + t.amount, 0);
-
-  const tplMulti = (config?.template_expense_multi as string)
-    ?? "✅ *{{count}} gastos registrados{{name_tag}}!*\n\n{{lines}}\n\n💸 *Total: R$ {{total}}*";
-
-  const nickMulti = (config?.user_nickname as string) || "";
-  return applyTemplate(tplMulti, {
-    count: String(transactions.length),
-    lines: lines.join("\n"),
-    total: total.toFixed(2).replace(".", ","),
-    name_tag: nickMulti ? `, ${nickMulti}` : "",
-  });
+  }).join("\n");
+  return `${normalLine}\n\n${installmentResponses.join("\n\n")}`;
 }
 
 // Mapa de sinônimos para categorias
@@ -1194,6 +1272,53 @@ async function handleFinanceReport(
 // ─────────────────────────────────────────────
 
 /** Lista categorias do usuário com totais gastos neste mês */
+/** Lista compras parceladas ativas (com parcelas restantes) */
+async function handleInstallmentQuery(userId: string): Promise<string> {
+  // Busca parcelas futuras (pendentes) agrupadas por installment_group
+  const today = new Date().toLocaleDateString("sv-SE");
+  const { data: parcelas } = await (supabase
+    .from("transactions")
+    .select("installment_group, description, amount, installment_number, installment_total, transaction_date")
+    .eq("user_id", userId)
+    .not("installment_group", "is", null)
+    .gte("transaction_date", today)
+    .order("transaction_date", { ascending: true }) as any);
+
+  if (!parcelas || parcelas.length === 0) {
+    return "💳 Você não tem parcelas ativas no momento.";
+  }
+
+  // Agrupa por installment_group
+  const groups: Record<string, typeof parcelas> = {};
+  for (const p of parcelas) {
+    const g = p.installment_group;
+    if (!groups[g]) groups[g] = [];
+    groups[g].push(p);
+  }
+
+  const lines: string[] = [];
+  for (const [, items] of Object.entries(groups)) {
+    const first = items[0];
+    // Extrai nome base (sem "1/3")
+    const baseName = first.description.replace(/\s*\(\d+\/\d+\)\s*$/, "");
+    const total = first.installment_total;
+    const remaining = items.length;
+    const paid = total - remaining;
+    const perInstallment = Number(first.amount).toFixed(2).replace(".", ",");
+    const totalAmount = (Number(first.amount) * total).toFixed(2).replace(".", ",");
+    const nextDate = new Date(items[0].transaction_date + "T12:00:00").toLocaleDateString("pt-BR", { month: "short", year: "numeric" });
+
+    lines.push(
+      `💳 *${baseName}*\n` +
+      `   R$ ${totalAmount} em ${total}x de R$ ${perInstallment}\n` +
+      `   ✅ ${paid} paga${paid !== 1 ? "s" : ""} · ⏳ ${remaining} restante${remaining !== 1 ? "s" : ""}\n` +
+      `   📅 Próxima: ${nextDate}`
+    );
+  }
+
+  return `💳 *Suas parcelas ativas:*\n\n${lines.join("\n\n")}`;
+}
+
 async function handleCategoryList(userId: string): Promise<string> {
   const { data: cats } = await supabase
     .from("categories")
@@ -5713,6 +5838,8 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       responseText = await handleFinanceRecord(profile.id, sendPhone || replyTo, text, config, userTz);
     } else if (intent === "category_list") {
       responseText = await handleCategoryList(profile.id);
+    } else if (intent === "installment_query") {
+      responseText = await handleInstallmentQuery(profile.id);
     } else if (intent === "finance_delete") {
       const delResult = await handleFinanceDelete(profile.id, text, userTz);
       responseText = delResult.response;

@@ -889,7 +889,14 @@ export default function Financas() {
                       <div className="w-1 h-7 rounded-full shrink-0" style={{ backgroundColor: conf.color }} />
                       <span className="text-base shrink-0">{conf.emoji}</span>
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate">{t.description}</p>
+                        <div className="flex items-center gap-1.5">
+                          <p className="text-sm font-medium truncate">{t.description}</p>
+                          {t.installment_number && t.installment_total && (
+                            <Badge className="text-[9px] bg-violet-500/20 text-violet-300 border-violet-500/30 shrink-0 px-1.5 py-0">
+                              {t.installment_number}/{t.installment_total}
+                            </Badge>
+                          )}
+                        </div>
                         <p className="text-[11px] text-muted-foreground">
                           {format(new Date(t.transaction_date + "T12:00:00"), "dd/MM", { locale: ptBR })} · {t.category}
                           {t.source === "whatsapp" && <span className="text-green-500/70 ml-1">● WhatsApp</span>}
@@ -1046,7 +1053,14 @@ export default function Financas() {
                                 </div>
                                 {/* Description + category */}
                                 <div className="flex-1 min-w-0">
-                                  <p className="text-sm font-medium truncate">{t.description}</p>
+                                  <div className="flex items-center gap-1.5">
+                                    <p className="text-sm font-medium truncate">{t.description}</p>
+                                    {t.installment_number && t.installment_total && (
+                                      <Badge className="text-[9px] bg-violet-500/20 text-violet-300 border-violet-500/30 shrink-0 px-1.5 py-0">
+                                        {t.installment_number}/{t.installment_total}
+                                      </Badge>
+                                    )}
+                                  </div>
                                   <div className="flex items-center gap-2 mt-0.5">
                                     <span className="text-[11px] text-muted-foreground capitalize">{t.category}</span>
                                     {t.source === "whatsapp" && (

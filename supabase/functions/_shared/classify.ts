@@ -11,6 +11,7 @@ export type Intent =
   | "finance_record"
   | "finance_report"
   | "finance_delete"
+  | "installment_query"
   | "category_list"
   | "budget_set"
   | "budget_query"
@@ -89,6 +90,15 @@ export function classifyIntent(msg: string): Intent {
     /(criar|adicionar|cadastrar|registrar).{0,10}(recorrente|fixo|fixa)/i.test(m)
   )
     return "recurring_create";
+
+  // Consultar parcelas ativas
+  // "quantas parcelas tenho?", "minhas parcelas", "parcelas ativas"
+  if (
+    /\b(quantas|minhas|quais|lista(r)?|mostra(r)?|ver)\s+(s[ãa]o\s+)?(minhas\s+|as\s+|de\s+)?parcelas?\b/.test(m) ||
+    /\bparcelas?\s+(ativa|ativas|pendente|pendentes|abertas?|restantes?)\b/.test(m) ||
+    /^parcelas?\s*\??$/.test(m)
+  )
+    return "installment_query";
 
   // Listar categorias (antes de finance_report pra priorizar)
   // "quais categorias tenho?" / "mostra minhas categorias" / "lista de categorias"

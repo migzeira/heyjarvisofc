@@ -79,7 +79,7 @@ export const DEFAULT_CATEGORIES = [
 export async function extractTransactions(
   text: string,
   userCategories: string[] = DEFAULT_CATEGORIES
-): Promise<Array<{ amount: number; description: string; type: "expense" | "income"; category: string }>> {
+): Promise<Array<{ amount: number; description: string; type: "expense" | "income"; category: string; installments?: number }>> {
   const system = `Você é um extrator de dados financeiros. Responda APENAS com JSON válido, sem markdown.`;
 
   // Normaliza a lista: garante defaults presentes + remove duplicatas (case-insensitive)
@@ -93,7 +93,7 @@ export async function extractTransactions(
   const catList = allCats.join(", ");
 
   const prompt = `Extraia transações financeiras do texto abaixo. Retorne JSON com array "transactions".
-Cada item: { "amount": número, "description": string, "type": "expense" ou "income", "category": uma de [${catList}] }
+Cada item: { "amount": número, "description": string, "type": "expense" ou "income", "category": uma de [${catList}], "installments": número ou null }
 
 REGRAS IMPORTANTES:
 1. Se detectar padrão "NÚMERO CATEGORIA" (ex: "340 gasolina", "200 pedagio", "100 bar"), assuma que é um GASTO (expense).
@@ -106,16 +106,21 @@ REGRAS IMPORTANTES:
    - Se ainda assim não encaixar, use "outros"
 3. Usuário com categorias personalizadas? Use elas quando fizer sentido.
 
+4. PARCELAMENTO — Se detectar padrões como "3x", "em 3 vezes", "parcelado em 6", "12x", "3 parcelas", "em 10 vezes":
+   - Retorne o amount como o VALOR TOTAL da compra (NÃO divida pelo número de parcelas)
+   - Preencha "installments" com o número de parcelas (ex: 3, 6, 12)
+   - Se NÃO detectar parcelamento: "installments" deve ser null
+
 Texto: "${text}"
 
 Exemplos:
-"340 gasolina" → { "amount": 340, "description": "gasolina", "type": "expense", "category": "transporte" }
-"gastei 200 de gasolina" → expense, transporte
-"200 pedagio" → { "amount": 200, "description": "pedagio", "type": "expense", "category": "transporte" }
-"100 bar" → { "amount": 100, "description": "bar", "type": "expense", "category": "lazer" }
-"paguei 500 no mercado" → expense, alimentacao
-"recebi 1000 de freela" → income, trabalho
-"comprei remédio 80 reais" → expense, saude
+"340 gasolina" → { "amount": 340, "description": "Gasolina", "type": "expense", "category": "transporte", "installments": null }
+"gastei 200 de gasolina" → { "amount": 200, "description": "Gasolina", "type": "expense", "category": "transporte", "installments": null }
+"comprei celular 300 em 3x" → { "amount": 300, "description": "Celular", "type": "expense", "category": "outros", "installments": 3 }
+"sofá 1200 parcelado em 12x" → { "amount": 1200, "description": "Sofá", "type": "expense", "category": "outros", "installments": 12 }
+"comprei tv 2000 em 10 vezes" → { "amount": 2000, "description": "TV", "type": "expense", "category": "outros", "installments": 10 }
+"paguei 500 no mercado" → { "amount": 500, "description": "Mercado", "type": "expense", "category": "alimentacao", "installments": null }
+"recebi 1000 de freela" → { "amount": 1000, "description": "Freela", "type": "income", "category": "trabalho", "installments": null }
 
 Responda SOMENTE com o JSON, sem explicações.`;
 
@@ -132,6 +137,10 @@ Responda SOMENTE com o JSON, sem explicações.`;
   for (const t of transactions) {
     if (!t.category || !allCatsLower.has(String(t.category).toLowerCase())) {
       t.category = "outros";
+    }
+    // Safety net: installments inválido
+    if (t.installments != null && (t.installments < 2 || t.installments > 48)) {
+      t.installments = null;
     }
   }
   return transactions;
