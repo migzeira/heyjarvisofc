@@ -1506,6 +1506,29 @@ async function handleFinanceDeleteConfirm(
 // ─────────────────────────────────────────────
 
 /** Primeira etapa: tenta achar a nota a deletar. Se há múltiplas, mostra lista. */
+/** Lista as últimas anotações do usuário */
+async function handleNotesList(userId: string): Promise<string> {
+  const { data: notes } = await supabase
+    .from("notes")
+    .select("id, title, content, created_at, source")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false })
+    .limit(10);
+
+  if (!notes || notes.length === 0) {
+    return "📝 Você ainda não tem anotações salvas.\n\nPra criar uma, me diga algo como:\n_\"anota que preciso comprar leite\"_\n_\"salva isso: reunião com João dia 15\"_";
+  }
+
+  const lines = notes.map((n: any, i: number) => {
+    const title = n.title || n.content?.slice(0, 50) || "Sem título";
+    const dateStr = new Date(n.created_at).toLocaleDateString("pt-BR", { day: "numeric", month: "short" });
+    const sourceBadge = (n.source === "whatsapp" || n.source === "whatsapp_forward") ? " 📱" : "";
+    return `*${i + 1}.* ${title}${sourceBadge} — ${dateStr}`;
+  });
+
+  return `📝 *Suas anotações (${notes.length} mais recentes):*\n\n${lines.join("\n")}\n\n_Pra ver detalhes, acesse o app. Pra apagar, diga "apaga a nota sobre X"._`;
+}
+
 async function handleNotesDelete(
   userId: string,
   message: string,
@@ -5917,6 +5940,8 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       }
     } else if (intent === "agenda_delete") {
       responseText = await handleAgendaDelete(profile.id, text);
+    } else if (intent === "notes_list") {
+      responseText = await handleNotesList(profile.id);
     } else if (intent === "notes_save") {
       const notesResult = await handleNotesSave(profile.id, sendPhone || replyTo, text, session, config, userTz);
       responseText = notesResult.response;

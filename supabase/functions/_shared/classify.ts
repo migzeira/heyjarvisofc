@@ -19,6 +19,7 @@ export type Intent =
   | "habit_create"
   | "habit_checkin"
   | "habit_checkin_choose"
+  | "notes_list"
   | "notes_delete"
   | "notes_delete_confirm"
   | "agenda_create"
@@ -213,6 +214,17 @@ export function classifyIntent(msg: string): Intent {
     /\btenho\s+(algum|algo)\s+(compromisso|evento|reuniao|consulta)\b/.test(m)
   )
     return "agenda_query";
+
+  // Listar notas/anotações
+  // "quais são minhas anotações", "mostra minhas notas", "me fala minhas anotações"
+  if (
+    /\b(quais|mostra(r)?|lista(r)?|ver|veja|mostre|me fala|me mostra)\s+(s[ãa]o\s+)?(as\s+|minhas\s+|de\s+)?anota(c[oõ]|ç[oõ])es?\b/.test(m) ||
+    /\b(quais|mostra(r)?|lista(r)?|ver|veja|mostre|me fala|me mostra)\s+(s[ãa]o\s+)?(as\s+|minhas\s+|de\s+)?notas?\b/.test(m) ||
+    /^(minhas\s+)?(anota(c[oõ]|ç[oõ])es?|notas)\s*\??$/.test(m) ||
+    /\bminhas (anota(c[oõ]|ç[oõ])es?|notas)\b/.test(m) ||
+    /\b(tenho|tem)\s+(alguma|quantas?)\s+(anota(c[oõ]|ç[oõ])es?|notas)\b/.test(m)
+  )
+    return "notes_list";
 
   // Deletar nota/anotação — ANTES de notes_save pra priorizar
   // "apaga a nota sobre X", "deleta anotacao de reunião", "remove a ultima anotacao"
