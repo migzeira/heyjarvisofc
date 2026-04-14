@@ -326,14 +326,17 @@ export default function AdminPanel() {
         },
         body: JSON.stringify({ user_ids: Array.from(broadcastSelected), message: broadcastMsg.trim() }),
       });
-      const data = await res.json();
+      const rawText = await res.text();
+      let data: any = {};
+      try { data = JSON.parse(rawText); } catch { /* nao é JSON */ }
+      console.log("[broadcast] status:", res.status, "body:", rawText);
       if (res.ok) {
         setBroadcastResults({ sent: data.sent, failed: data.failed, skipped: data.skipped });
         setBroadcastMsg("");
         setBroadcastSelected(new Set());
         toast.success(`✅ ${data.sent} mensagem(ns) enviada(s)!`);
       } else {
-        toast.error(data.error ?? "Erro ao enviar");
+        toast.error(`[${res.status}] ${data.error ?? rawText.slice(0, 200) ?? "Erro ao enviar"}`);
       }
     } catch (err) {
       console.error("[broadcast] erro:", err);
