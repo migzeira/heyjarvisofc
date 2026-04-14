@@ -3840,11 +3840,32 @@ async function handleReminderCancel(
     return `Qual lembrete quer cancelar? Seus lembretes pendentes:\n\n${fmtPendingList()}\n\nEx: _"cancela o lembrete de pagar aluguel"_`;
   }
 
-  // Busca melhor match por similaridade de texto
-  const match = reminders.find(r => {
+  // Busca melhor match — 3 estratégias em cascata:
+  // 1) Contém o searchTerm exato no título
+  let match = reminders.find(r => {
     const t = norm(r.title ?? r.message ?? "");
     return t.includes(searchTerm) || searchTerm.includes(t.slice(0, 12));
   });
+
+  // 2) Qualquer palavra com 4+ letras do searchTerm aparece no título
+  if (!match) {
+    const keywords = searchTerm.split(/\s+/).filter(w => w.length >= 4);
+    match = reminders.find(r => {
+      const t = norm(r.title ?? r.message ?? "");
+      return keywords.some(w => t.includes(w));
+    });
+  }
+
+  // 3) Para lembretes "Mensagem para X": testa se o nome do contato está no searchTerm
+  if (!match) {
+    match = reminders.find(r => {
+      const t = norm(r.title ?? r.message ?? "");
+      if (!t.startsWith("mensagem para ")) return false;
+      const contactName = t.replace("mensagem para ", "").trim();
+      return searchTerm.includes(contactName) ||
+        contactName.split(" ").some(w => w.length >= 3 && searchTerm.includes(w));
+    });
+  }
 
   if (!match) {
     return `Não encontrei esse lembrete. Seus pendentes:\n\n${fmtPendingList()}\n\nTente o nome exato.`;
