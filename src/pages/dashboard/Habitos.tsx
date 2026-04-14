@@ -737,6 +737,11 @@ export default function Habitos() {
 
   const deleteHabit = async (id: string) => {
     if (!confirm("Remover este hábito?")) return;
+    // Cancel all pending reminders first, then delete the habit
+    await (supabase.from("reminders" as any) as any)
+      .delete()
+      .eq("habit_id", id)
+      .eq("status", "pending");
     await (supabase.from("habits" as any).delete().eq("id", id) as any);
     toast.success("Hábito removido.");
     loadData();
@@ -915,6 +920,30 @@ export default function Habitos() {
                         checked={h.is_active}
                         onCheckedChange={async v => {
                           await (supabase.from("habits" as any).update({ is_active: v } as any).eq("id", h.id) as any);
+                          // Cancel pending reminders when pausing; recreate when reactivating
+                          await (supabase.from("reminders" as any) as any)
+                            .delete()
+                            .eq("habit_id", h.id)
+                            .eq("status", "pending");
+                          if (v && userPhone) {
+                            const times: string[] = Array.isArray(h.reminder_times)
+                              ? h.reminder_times as string[]
+                              : JSON.parse(h.reminder_times as string);
+                            const newReminders = times.map(t => ({
+                              user_id: user!.id,
+                              habit_id: h.id,
+                              whatsapp_number: userPhone,
+                              title: h.name,
+                              message: `⏰ Hora do seu hábito: *${h.name}*`,
+                              send_at: nextDailyUTC(t),
+                              recurrence: "daily",
+                              source: "habit",
+                              status: "pending",
+                            }));
+                            if (newReminders.length > 0) {
+                              await (supabase.from("reminders" as any).insert(newReminders as any) as any);
+                            }
+                          }
                           loadData();
                         }}
                         className="scale-90"
