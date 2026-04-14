@@ -869,97 +869,85 @@ export default function Habitos() {
         </div>
       </div>
 
-      {/* ── Custom Habits ── */}
+      {/* ── Custom Habits (mesmo layout dos presets) ── */}
       {customHabits.length > 0 && (
         <div>
           <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">
             Meus Hábitos Personalizados
           </h2>
-          <div className="grid sm:grid-cols-2 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
             {customHabits.map(h => {
               const todayDone = logs.some(l => l.habit_id === h.id && l.logged_date === today);
-              const habitWeekLogs = logs.filter(l => l.habit_id === h.id);
 
               return (
-                <Card key={h.id} className={`bg-card border-border transition-opacity ${!h.is_active ? "opacity-50" : ""}`}>
-                  <CardContent className="pt-4">
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="flex items-center gap-2">
-                        <span className="text-2xl">{h.icon}</span>
-                        <div>
-                          <h3 className="font-semibold text-sm">{h.name}</h3>
-                          {h.description && <p className="text-xs text-muted-foreground">{h.description}</p>}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <Switch
-                          checked={h.is_active}
-                          onCheckedChange={async v => {
-                            await (supabase.from("habits" as any).update({ is_active: v } as any).eq("id", h.id) as any);
-                            loadData();
-                          }}
-                        />
-                        <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => openEditCustom(h)}>
-                          <Pencil className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-destructive" onClick={() => deleteHabit(h.id)}>
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
-                      </div>
+                <div
+                  key={h.id}
+                  className={`relative rounded-xl border p-3 transition-all duration-200 ${
+                    h.is_active
+                      ? "border-transparent shadow-md"
+                      : "border-border bg-card opacity-70 hover:opacity-90"
+                  }`}
+                  style={h.is_active ? { background: `${h.color}18`, borderColor: `${h.color}40` } : {}}
+                >
+                  {/* Top row: icon + actions */}
+                  <div className="flex items-start justify-between mb-2">
+                    <span className="text-2xl leading-none">{h.icon}</span>
+                    <div className="flex items-center gap-0.5">
+                      {h.is_active && (
+                        <>
+                          <button
+                            onClick={() => openEditCustom(h)}
+                            className="p-1 rounded-md hover:bg-black/10 transition-colors"
+                            title="Editar"
+                          >
+                            <Pencil className="h-3 w-3 text-muted-foreground" />
+                          </button>
+                          <button
+                            onClick={() => deleteHabit(h.id)}
+                            className="p-1 rounded-md hover:bg-black/10 transition-colors"
+                            title="Remover"
+                          >
+                            <Trash2 className="h-3 w-3 text-muted-foreground" />
+                          </button>
+                        </>
+                      )}
+                      <Switch
+                        checked={h.is_active}
+                        onCheckedChange={async v => {
+                          await (supabase.from("habits" as any).update({ is_active: v } as any).eq("id", h.id) as any);
+                          loadData();
+                        }}
+                        className="scale-90"
+                      />
                     </div>
+                  </div>
 
-                    {/* Streak */}
-                    <div className="flex items-center gap-3 mb-3">
-                      <div className="flex items-center gap-1">
-                        <Flame className={`h-4 w-4 ${h.current_streak > 0 ? "text-orange-500" : "text-muted-foreground/30"}`} />
-                        <span className="text-sm font-bold">{h.current_streak}</span>
-                        <span className="text-xs text-muted-foreground">streak</span>
-                      </div>
-                      {h.best_streak > 0 && (
+                  {/* Name + description */}
+                  <p className="text-xs font-semibold leading-tight mb-0.5">{h.name}</p>
+                  {!h.is_active && h.description && (
+                    <p className="text-[10px] text-muted-foreground leading-snug line-clamp-2">{h.description}</p>
+                  )}
+
+                  {/* Active: streak + today status */}
+                  {h.is_active && (
+                    <div className="mt-2 space-y-1">
+                      {h.current_streak > 0 && (
                         <div className="flex items-center gap-1">
-                          <Trophy className="h-3.5 w-3.5 text-yellow-500/60" />
-                          <span className="text-xs text-muted-foreground">Recorde: {h.best_streak}</span>
+                          <Flame className="h-3 w-3 text-orange-500" />
+                          <span className="text-[11px] font-medium">{h.current_streak} dias</span>
                         </div>
                       )}
+                      {todayDone ? (
+                        <div className="flex items-center gap-1 text-emerald-500">
+                          <CheckCircle2 className="h-3 w-3" />
+                          <span className="text-[11px] font-medium">Feito hoje</span>
+                        </div>
+                      ) : (
+                        <p className="text-[10px] text-muted-foreground">Aguardando lembrete 🔔</p>
+                      )}
                     </div>
-
-                    {/* Week circles */}
-                    <div className="flex justify-between mb-3">
-                      {weekDays.map((day, idx) => {
-                        const dateStr = format(day, "yyyy-MM-dd");
-                        const done = habitWeekLogs.some(l => l.logged_date === dateStr);
-                        const isToday = isSameDay(day, new Date());
-                        return (
-                          <div key={idx} className="flex flex-col items-center gap-0.5">
-                            <span className="text-[10px] text-muted-foreground">{DAY_LABELS[idx]}</span>
-                            <div
-                              className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-medium border-2 transition-colors ${
-                                done ? "border-transparent text-white" :
-                                isToday ? "border-primary/50 text-muted-foreground" :
-                                "border-border text-muted-foreground/40"
-                              }`}
-                              style={done ? { backgroundColor: h.color } : {}}
-                            >
-                              {done ? "✓" : format(day, "d")}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-
-                    {/* Check-in acontece via WhatsApp — exibe apenas status */}
-                    {todayDone ? (
-                      <div className="flex items-center justify-center gap-1.5 py-2 rounded-lg bg-emerald-500/10 text-emerald-500 text-sm font-medium">
-                        <CheckCircle2 className="h-4 w-4" />
-                        Feito hoje ✅
-                      </div>
-                    ) : (
-                      <div className="flex items-center justify-center gap-1.5 py-2 rounded-lg bg-muted text-muted-foreground text-sm">
-                        🔔 Aguardando lembrete
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
+                  )}
+                </div>
               );
             })}
           </div>
