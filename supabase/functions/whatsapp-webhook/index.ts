@@ -4768,13 +4768,28 @@ async function handleSendToContact(
 ): Promise<string> {
   const norm = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 
-  // Detecta atraso: "daqui 30 minutos", "daqui 1 hora"
-  let delayMs = 0;
+  // ─── Detecta agendamento: relativo ("daqui 30min") ou absoluto ("às 17h") ──
+  let scheduledAt: string | null = null;
+
+  // Relativo: "daqui X minutos/horas"
   const delayMatch = norm.match(/daqui\s+(\d+)\s*(minuto|hora)/i);
   if (delayMatch) {
     const num = parseInt(delayMatch[1]);
     const unit = delayMatch[2].toLowerCase();
-    delayMs = unit.startsWith("min") ? num * 60_000 : num * 3_600_000;
+    const delayMs = unit.startsWith("min") ? num * 60_000 : num * 3_600_000;
+    scheduledAt = new Date(Date.now() + delayMs).toISOString();
+  }
+
+  // Absoluto: "às 17h", "as 18:30", "amanhã às 9h", etc.
+  if (!scheduledAt && /\b([àa]s?\s+\d{1,2}[h:]\d*|amanha|amanhã)\b/i.test(norm)) {
+    try {
+      const tzOff = getTzOffset(userTz);
+      const nowIso = new Date().toLocaleString("sv-SE", { timeZone: userTz }).replace(" ", "T") + tzOff;
+      const parsedTime = await parseReminderIntent(text, nowIso);
+      if (parsedTime?.remind_at) {
+        scheduledAt = new Date(parsedTime.remind_at).toISOString();
+      }
+    } catch (_) { /* falhou — envia imediatamente */ }
   }
 
   // Extrai nome do contato — "pra/para/pro [Nome]"
@@ -4883,21 +4898,27 @@ async function handleSendToContact(
     `💬 _"${msgContent}"_` +
     buildJarvisCTA(senderName, userPhone);
 
-  if (delayMs > 0) {
-    const sendAt = new Date(Date.now() + delayMs).toISOString();
+  if (scheduledAt) {
     await supabase.from("reminders").insert({
       user_id: userId,
       whatsapp_number: found.phone,
       title: `Mensagem para ${found.name}`,
       message: outgoing,
-      send_at: sendAt,
+      send_at: scheduledAt,
       recurrence: "none",
       source: "send_to_contact",
       status: "pending",
     });
-    const mins = Math.round(delayMs / 60_000);
-    const timeLabel = mins < 60 ? `${mins} minuto${mins > 1 ? "s" : ""}` : `${Math.round(mins / 60)} hora${mins >= 120 ? "s" : ""}`;
-    return `✅ Agendado! Vou mandar a mensagem pra *${found.name}* em ${timeLabel}.`;
+    const sendAtDate = new Date(scheduledAt);
+    const timeLabel = sendAtDate.toLocaleString("pt-BR", {
+      timeZone: userTz,
+      hour: "2-digit",
+      minute: "2-digit",
+      weekday: "short",
+      day: "2-digit",
+      month: "short",
+    });
+    return `✅ Agendado! Vou mandar a mensagem pra *${found.name}* ${timeLabel}. 📅`;
   }
 
   await sendText(found.phone, outgoing);
