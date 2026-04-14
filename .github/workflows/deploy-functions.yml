@@ -24,3 +24,8 @@ jobs:
         run: supabase functions deploy send-reminder --project-ref fnilyapvhhygfzcdxqjm --no-verify-jwt
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: Deploy admin-broadcast
+        run: supabase functions deploy admin-broadcast --project-ref fnilyapvhhygfzcdxqjm
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
