@@ -260,6 +260,34 @@ serve(async (_req) => {
         );
       } else {
         await sendText(reminder.whatsapp_number, finalMessage);
+
+        // Se for send_to_contact, cria relay_request para que a resposta
+        // do contato seja repassada automaticamente ao usuario via Jarvis
+        if (reminder.source === "send_to_contact" && reminder.user_id) {
+          try {
+            const toPhone = String(reminder.whatsapp_number ?? "").replace(/\D/g, "");
+            // Busca telefone e config do usuario (sender) em paralelo
+            const [profileRes, configRes] = await Promise.all([
+              supabase.from("profiles").select("phone_number, display_name").eq("id", reminder.user_id).maybeSingle(),
+              supabase.from("agent_configs").select("user_nickname, agent_name").eq("user_id", reminder.user_id).maybeSingle(),
+            ]);
+            const fromPhone = profileRes.data?.phone_number?.replace(/\D/g, "");
+            const senderName = configRes.data?.user_nickname || profileRes.data?.display_name || null;
+            const agentName  = configRes.data?.agent_name || "Jarvis";
+            if (fromPhone && toPhone) {
+              supabase.from("relay_requests").insert({
+                from_user_id: reminder.user_id,
+                from_phone:   fromPhone,
+                to_phone:     toPhone,
+                original_message: finalMessage,
+                status:       "sent",
+                sender_name:  senderName,
+                agent_name:   agentName,
+                expires_at:   new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString(),
+              }).then(() => {}).catch(() => {}); // fire-and-forget
+            }
+          } catch (_relayErr) { /* nao quebra o fluxo de envio */ }
+        }
       }
 
       // Marca como enviado
