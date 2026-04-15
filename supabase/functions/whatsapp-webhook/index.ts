@@ -4869,11 +4869,18 @@ async function handleIncomingRelay(
 
   const now = new Date().toISOString();
 
-  // Busca relay ativo para este telefone
+  // Normaliza o telefone em multiplos formatos para busca robusta
+  // Evolution pode enviar "5519..." ou "19..." dependendo da configuracao
+  const rawDigits  = incomingPhone.replace(/\D/g, "");
+  const phone55    = rawDigits.startsWith("55") ? rawDigits : `55${rawDigits}`;
+  const phoneNo55  = rawDigits.startsWith("55") ? rawDigits.slice(2) : rawDigits;
+  const phoneOrFilter = `to_phone.eq.${phone55},to_phone.eq.${phoneNo55},to_phone.eq.+${phone55}`;
+
+  // Busca relay ativo para este telefone (tenta todos os formatos de numero)
   const { data: relay } = await supabase
     .from("relay_requests")
     .select("*")
-    .eq("to_phone", incomingPhone)
+    .or(phoneOrFilter)
     .eq("status", "sent")
     .gt("expires_at", now)
     .order("created_at", { ascending: false })
@@ -4890,7 +4897,7 @@ async function handleIncomingRelay(
     .from("contacts")
     .select("name")
     .eq("user_id", relay.from_user_id)
-    .or(`phone.eq.${incomingPhone},phone.eq.55${incomingPhone},phone.eq.+${incomingPhone}`)
+    .or(`phone.eq.${phone55},phone.eq.${phoneNo55},phone.eq.+${phone55}`)
     .limit(1)
     .maybeSingle();
   const contactFirstName = ctFound?.name?.split(" ")[0] || "Seu contato";
@@ -5059,11 +5066,11 @@ async function handleSendToContact(
     `${greeting}, *${contactFirstName}*! 😊\n\n` +
     `Aqui é o *${agentName}*, assistente virtual do *${senderName}*.\n\n` +
     `Ele(a) me pediu para te passar um recado:\n\n` +
-    `💬 _"${msgContent}"_` +
-    buildJarvisCTA(senderName, userPhone) +
-    `\n\n——————————————\n📩 *Para responder esta mensagem, envie:*\n` +
+    `💬 _"${msgContent}"_\n\n` +
+    `——————————————\n📩 *Para responder esta mensagem, envie:*\n` +
     `*Responder:* [sua mensagem]\n` +
-    `_Ex: Responder: Ok, estarei lá!_`;
+    `_Ex: Responder: Ok, estarei lá!_` +
+    buildJarvisCTA(senderName, userPhone);
 
   if (scheduledAt) {
     await supabase.from("reminders").insert({
@@ -5808,10 +5815,17 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
     // ── RELAY CHECK — intercepta respostas de contatos externos ──
     // Roda antes do "unknown_number" para capturar contatos que nao sao usuarios Jarvis
     // e tambem antes do fluxo normal para usuarios Jarvis que estao respondendo um relay.
-    // Se o fallbackPhone tem um relay ativo como to_phone, trata e retorna.
-    if (fallbackPhone) {
+    //
+    // IMPORTANTE: usuarios Jarvis com WhatsApp Multi-Device chegam via @lid (ID opaco),
+    // entao fallbackPhone pode estar vazio. Nesse caso usamos profile.phone_number
+    // (ja resolvido pelos fallbacks acima) para buscar o relay_request no banco.
+    const relayCheckPhone = profile?.phone_number
+      ? sanitizePhone(profile.phone_number)
+      : fallbackPhone;
+
+    if (relayCheckPhone) {
       try {
-        const relayHandled = await handleIncomingRelay(fallbackPhone, text);
+        const relayHandled = await handleIncomingRelay(relayCheckPhone, text);
         if (relayHandled) {
           log.push("relay_handled");
           return log;
