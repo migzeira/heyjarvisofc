@@ -181,7 +181,9 @@ export function classifyIntent(msg: string): Intent {
   // "manda mensagem pra cibele dizendo X" / "manda uma mensagem pro Joao que..."
   // "fala pra/pro X que..." / "daqui 30min manda pra X..."
   if (
-    (/\b(manda(r)?|envia(r)?|fala(r)?|diz(er)?|avisa(r)?|escreve(r)?)\s+(uma?\s+)?(mensagem|msg)?\s*(pra|para|pro|ao)\s+\w/i.test(m) ||
+    (// "manda uma mensagem [agora/já/aqui/...] pra João dizendo..."
+     // .{0,25}? permite palavras intermediárias entre "mensagem" e "pra/pro"
+     /\b(manda(r)?|envia(r)?|fala(r)?|diz(er)?|avisa(r)?|escreve(r)?)\s+(uma?\s+)?(mensagem|msg)?.{0,25}?(pra|para|pro|ao)\s+\w/i.test(m) ||
     /\b(fala(r)?|diz(er)?|avisa(r)?)\s+(pra|para|pro|ao)\s+\w+\s+(que|dizendo|falando|sobre)/i.test(m) ||
     /\b(manda(r)?|envia(r)?)\s+(pra|para|pro|ao)\s+\w+\s+(dizendo|falando|contando)/i.test(m)) &&
     !/\b(lembrete|reminder|me avisa|me lembra|agenda|marcar)\b/i.test(m)

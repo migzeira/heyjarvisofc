@@ -4963,11 +4963,16 @@ async function handleSendToContact(
 ): Promise<string> {
   const norm = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 
-  // ─── Detecta agendamento: relativo ("daqui 30min") ou absoluto ("às 17h") ──
+  // ─── Detecta agendamento APENAS na parte de entrega (antes do conteúdo) ──
+  // "daqui 30min manda pra João dizendo amanhã vai chover" → "amanhã" é conteúdo, não entrega
+  // Isola o trecho antes de "dizendo/falando/que/:" para não confundir com o corpo da mensagem
   let scheduledAt: string | null = null;
+  const contentSepIdx = norm.search(/\b(dizendo|dizer|falando|que\s|:\s)/i);
+  const normDelivery  = contentSepIdx > 0 ? norm.slice(0, contentSepIdx) : norm;
+  const textDelivery  = contentSepIdx > 0 ? text.slice(0, contentSepIdx) : text;
 
   // Relativo: "daqui X minutos/horas"
-  const delayMatch = norm.match(/daqui\s+(\d+)\s*(minuto|hora)/i);
+  const delayMatch = normDelivery.match(/daqui\s+(\d+)\s*(minuto|hora)/i);
   if (delayMatch) {
     const num = parseInt(delayMatch[1]);
     const unit = delayMatch[2].toLowerCase();
@@ -4975,12 +4980,12 @@ async function handleSendToContact(
     scheduledAt = new Date(Date.now() + delayMs).toISOString();
   }
 
-  // Absoluto: "às 17h", "as 18:30", "amanhã às 9h", etc.
-  if (!scheduledAt && /\b([àa]s?\s+\d{1,2}[h:]\d*|amanha|amanhã)\b/i.test(norm)) {
+  // Absoluto: "às 17h", "as 18:30", "amanhã às 9h" — só na parte de entrega
+  if (!scheduledAt && /\b([àa]s?\s+\d{1,2}[h:]\d*|amanha|amanha\s+as|amanha\s+[àa]s)\b/i.test(normDelivery)) {
     try {
       const tzOff = getTzOffset(userTz);
       const nowIso = new Date().toLocaleString("sv-SE", { timeZone: userTz }).replace(" ", "T") + tzOff;
-      const parsedTime = await parseReminderIntent(text, nowIso);
+      const parsedTime = await parseReminderIntent(textDelivery, nowIso);
       if (parsedTime?.remind_at) {
         scheduledAt = new Date(parsedTime.remind_at).toISOString();
       }
