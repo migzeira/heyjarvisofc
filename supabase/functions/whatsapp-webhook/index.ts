@@ -4833,6 +4833,125 @@ function phoneForDisplay(raw: string): string {
  * Envia mensagem para um contato salvo, imediatamente ou com atraso.
  * Ex: "manda pra Cibele dizendo pegar pão" / "daqui 30min manda pra João que..."
  */
+// ─────────────────────────────────────────────
+// RELAY DE MENSAGEM — repassa resposta do contato de volta ao usuario
+// ─────────────────────────────────────────────
+
+/**
+ * Verifica se a mensagem entrante é resposta a um relay_request ativo.
+ * Retorna true se o relay foi tratado (para o fluxo normal).
+ * Retorna false se não é relay (continua o fluxo normal do Jarvis).
+ *
+ * Fluxo:
+ *  1. Contato recebe mensagem via Jarvis e responde ao bot
+ *  2. Se perguntar "pode responder?" → Jarvis coleta resposta em uma mensagem
+ *  3. Se mandar mensagem direta → Jarvis repassa imediatamente ao usuario
+ *  4. Usuario recebe: "📨 Cibele respondeu: '...'"
+ *  5. Relay encerrado — contato nao recebe mais respostas do bot
+ */
+async function handleIncomingRelay(
+  incomingPhone: string,   // telefone de quem esta respondendo (digitos apenas)
+  text: string,
+): Promise<boolean> {
+  const now = new Date().toISOString();
+
+  // Busca relay ativo onde to_phone = incomingPhone (ainda nao expirado)
+  const { data: relay } = await supabase
+    .from("relay_requests")
+    .select("*")
+    .eq("to_phone", incomingPhone)
+    .eq("status", "sent")
+    .gt("expires_at", now)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!relay) return false; // nao e relay, continua fluxo normal
+
+  const sendToPhone = incomingPhone;
+  const senderName  = (relay.sender_name as string) || "seu contato";
+  const agentN      = (relay.agent_name  as string) || "Jarvis";
+  const fromPhone   = (relay.from_phone  as string);
+
+  // Busca nome do contato nos contatos do usuario pra notificacao
+  const { data: ctFound } = await supabase
+    .from("contacts")
+    .select("name")
+    .eq("user_id", relay.from_user_id)
+    .or(`phone.eq.${incomingPhone},phone.eq.55${incomingPhone},phone.eq.+${incomingPhone}`)
+    .limit(1)
+    .maybeSingle();
+  const contactFirstName = ctFound?.name?.split(" ")[0] || "Seu contato";
+
+  // ── Caso A: ja pedimos a mensagem, agora coletamos ──
+  if ((relay.session_step as string | null) === "waiting_reply") {
+    const replyMsg = text.trim();
+
+    // Marca relay como completo
+    await supabase
+      .from("relay_requests")
+      .update({ status: "completed", relay_reply: replyMsg })
+      .eq("id", relay.id);
+
+    // Notifica o usuario Jarvis com a resposta do contato
+    await sendText(
+      fromPhone,
+      `📨 *${contactFirstName} respondeu:*\n\n💬 _"${replyMsg}"_`
+    ).catch(() => {});
+
+    // Agradece o contato e encerra — nao responde mais
+    await sendText(
+      sendToPhone,
+      `✅ Mensagem repassada para *${senderName}*! Obrigado. 😊`
+    ).catch(() => {});
+
+    return true;
+  }
+
+  // ── Caso B: primeira mensagem do contato ──
+  const msgNorm = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+
+  // Detecta se esta perguntando se pode responder
+  const isAskingToReply =
+    /pode\s+(responder|mandar|enviar|falar|passar|dizer)|voce\s+(pode|consegue)|vc\s+(pode|consegue)|tem\s+como\s+respond|como\s+(fa[cç]o\s+pra\s+respond|respondo)|posso\s+respond|quero\s+respond/i.test(text) ||
+    /^(pode|consegue|tem como|como faco|posso|como respondo|da pra responder)[?\s]/i.test(text);
+
+  if (isAskingToReply) {
+    // Pede que envie a mensagem de resposta em uma unica msg
+    await supabase
+      .from("relay_requests")
+      .update({ session_step: "waiting_reply" })
+      .eq("id", relay.id);
+
+    await sendText(
+      sendToPhone,
+      `Pode sim! 😊\n\nMe envie em *uma única mensagem* o que quer dizer para *${senderName}*, que eu repasso imediatamente.`
+    ).catch(() => {});
+
+    return true;
+  }
+
+  // Mensagem direta (nao e pergunta) → trata como reply imediato
+  const replyMsg = text.trim();
+
+  await supabase
+    .from("relay_requests")
+    .update({ status: "completed", relay_reply: replyMsg })
+    .eq("id", relay.id);
+
+  await sendText(
+    fromPhone,
+    `📨 *${contactFirstName} respondeu:*\n\n💬 _"${replyMsg}"_`
+  ).catch(() => {});
+
+  await sendText(
+    sendToPhone,
+    `✅ Mensagem repassada para *${senderName}*! Obrigado. 😊`
+  ).catch(() => {});
+
+  return true;
+}
+
 async function handleSendToContact(
   userId: string,
   replyTo: string,
@@ -4998,6 +5117,23 @@ async function handleSendToContact(
   }
 
   await sendText(found.phone, outgoing);
+
+  // Registra relay_request: se o contato responder, Jarvis repassa automaticamente
+  const fromPhoneDigits = userProfile?.phone_number?.replace(/\D/g, "") ?? replyTo.replace(/\D/g, "");
+  const toPhoneDigits   = (found.phone as string).replace(/\D/g, "");
+  if (fromPhoneDigits && toPhoneDigits) {
+    supabase.from("relay_requests").insert({
+      from_user_id:     userId,
+      from_phone:       fromPhoneDigits,
+      to_phone:         toPhoneDigits,
+      original_message: msgContent,
+      status:           "sent",
+      sender_name:      senderName,
+      agent_name:       agentName,
+      expires_at:       new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString(),
+    }).then(() => {}).catch(() => {}); // fire-and-forget — nao bloqueia o fluxo
+  }
+
   return `✅ Mensagem enviada pra *${found.name}*!`;
 }
 
@@ -5694,6 +5830,23 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
         profile = orphans[0];
         supabase.from("profiles").update({ whatsapp_lid: lid }).eq("id", orphans[0].id).then(() => {}).catch(() => {});
         log.push(`lid_linked_by_orphan: ${orphans[0].id}`);
+      }
+    }
+
+    // ── RELAY CHECK — intercepta respostas de contatos externos ──
+    // Roda antes do "unknown_number" para capturar contatos que nao sao usuarios Jarvis
+    // e tambem antes do fluxo normal para usuarios Jarvis que estao respondendo um relay.
+    // Se o fallbackPhone tem um relay ativo como to_phone, trata e retorna.
+    if (fallbackPhone) {
+      try {
+        const relayHandled = await handleIncomingRelay(fallbackPhone, text);
+        if (relayHandled) {
+          log.push("relay_handled");
+          return log;
+        }
+      } catch (relayErr) {
+        // Nao deixa erro no relay quebrar o fluxo principal
+        console.error("[relay] handleIncomingRelay error:", relayErr);
       }
     }
 
