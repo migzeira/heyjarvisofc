@@ -163,7 +163,9 @@ export function classifyIntent(msg: string): Intent {
   //     "agenda call com João sexta 14h"
   //     "marca reuniao com Guilherme e manda o link pra ele" (compatível com pedido explícito)
   if (
-    /\b(marca(r)?|agenda(r)?|cria(r)?|marcar)\s+(uma?\s+)?(reuniao|meeting|call|chamada|videochamada|videoconferencia|conferencia)\s+(com|pra|para)\s+(o\s+|a\s+|os\s+|as\s+)?[a-záéíóúâêîôûãõç]/i.test(m)
+    // Permite palavras intermediárias entre o substantivo e "com [Nome]"
+    // ex: "marca reuniao sexta 12h com o roberto", "agenda call amanha 14h com joao"
+    /\b(marca(r)?|agenda(r)?|cria(r)?|marcar)\s+(uma?\s+)?(reuniao|meeting|call|chamada|videochamada|videoconferencia|conferencia)\b.{0,80}?\bcom\s+(o\s+|a\s+|os\s+|as\s+)?[a-záéíóúâêîôûãõç][a-záéíóúâêîôûãõç]+/i.test(m)
   )
     return "schedule_meeting";
 

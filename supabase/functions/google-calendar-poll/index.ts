@@ -234,17 +234,27 @@ async function syncUser(integration: any): Promise<{
     // Existe?
     const { data: existing } = await supabase
       .from("events")
-      .select("id, title, event_date, event_time, end_time, location, meeting_url, status, source")
+      .select("id, title, event_date, event_time, end_time, location, meeting_url, status, source, created_at")
       .eq("user_id", integration.user_id)
       .eq("google_event_id", row.google_event_id)
       .maybeSingle();
+
+    // Janela de "settle" — eventos criados nos últimos 5 min ainda podem
+    // ter ripples vindos do Google (ex: Meet finalizando geração assíncrona,
+    // end_time defaultando pra +1h, etc.). Atualiza o banco mas suprime
+    // notificação WhatsApp pra não encher o saco do usuário com "evento atualizado"
+    // logo após o "agendado" inicial.
+    const SETTLE_WINDOW_MS = 5 * 60 * 1000;
+    const isInSettleWindow = existing
+      ? (Date.now() - new Date((existing as any).created_at).getTime()) < SETTLE_WINDOW_MS
+      : false;
 
     // ── EXISTE + cancelado no Google ──
     if (existing && row.status === "cancelled") {
       if (existing.status !== "cancelled") {
         await supabase.from("events").update({ status: "cancelled" }).eq("id", existing.id);
         stats.cancelled++;
-        if (phone && !isFirstSync) {
+        if (phone && !isFirstSync && !isInSettleWindow) {
           const greet = nick ? `, ${nick}` : "";
           const dt = fmtDateTime(existing.event_date, existing.event_time?.slice(0, 5) ?? null, tz);
           await sendText(
@@ -334,7 +344,7 @@ async function syncUser(integration: any): Promise<{
       .eq("id", existing.id);
     stats.updated++;
 
-    if (phone && !isFirstSync) {
+    if (phone && !isFirstSync && !isInSettleWindow) {
       const greet = nick ? `, ${nick}` : "";
       const dt = fmtDateTime(row.event_date, row.event_time, tz);
       const meetLine = row.meeting_url ? `\n🔗 ${row.meeting_url}` : "";
@@ -343,6 +353,8 @@ async function syncUser(integration: any): Promise<{
         `✏️ *Evento atualizado${greet}*\n\n📌 ${row.title}\n📅 ${dt}${meetLine}\n\n*Mudanças:*\n• ${changes.join("\n• ")}\n\n_Atualizado no seu Google Calendar._`,
       ).catch((e) => console.error("[gcal-poll] sendText update failed:", e));
       stats.notified++;
+    } else if (isInSettleWindow) {
+      console.log("[gcal-poll] suppressed update notification — event in settle window:", existing.id);
     }
   }
 
