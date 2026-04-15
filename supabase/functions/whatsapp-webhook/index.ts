@@ -6740,18 +6740,105 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
         /^(1|sim|salvar|salva|confirmar|ok|yes)\b/i.test(text);
 
       if (isYes && csName && csPhone) {
+        // Em vez de salvar direto, pergunta se é Pessoa ou Estabelecimento
+        await sendButtons(
+          sendPhone || replyTo,
+          "📇 Tipo de contato",
+          `*${csName}* é uma pessoa ou estabelecimento?`,
+          [
+            { id: `CONTACT_TYPE_PERSON|${csName}|${csPhone}`, text: "👤 Pessoa" },
+            { id: `CONTACT_TYPE_BIZ|${csName}|${csPhone}`,    text: "🏪 Estabelecimento" },
+          ]
+        );
+        pendingAction  = "contact_save_type";
+        pendingContext = { name: csName, phone: csPhone };
+        responseText   = ""; // botão já enviado
+      } else {
+        responseText   = "Ok, contato não salvo. 👍";
+        pendingAction  = undefined;
+        pendingContext = undefined;
+      }
+
+    } else if (intent === "contact_save_type") {
+      // Usuário escolheu Pessoa ou Estabelecimento
+      const ctx = (session?.pending_context ?? {}) as Record<string, unknown>;
+      let ctName  = (ctx.name  as string) || "";
+      let ctPhone = (ctx.phone as string) || "";
+
+      // Extrai do botão se disponível
+      const btnParts = text.replace("BUTTON:", "").split("|");
+      if ((btnParts[0] === "CONTACT_TYPE_PERSON" || btnParts[0] === "CONTACT_TYPE_BIZ") && btnParts[1]) {
+        ctName  = btnParts[1];
+        ctPhone = btnParts[2] ?? ctPhone;
+      }
+
+      const isPerson =
+        text.startsWith("BUTTON:CONTACT_TYPE_PERSON") ||
+        /^(1|pessoa|pessoal|amigo|amiga|familiar|contato pessoal)\b/i.test(text);
+
+      const isBiz =
+        text.startsWith("BUTTON:CONTACT_TYPE_BIZ") ||
+        /^(2|estabelecimento|empresa|loja|restaurante|farmacia|negocio|comercio|biz)\b/i.test(text);
+
+      if (isPerson && ctName && ctPhone) {
         const { error } = await supabase.from("contacts").upsert(
-          { user_id: profile.id, name: csName, phone: csPhone, source: "whatsapp" },
+          { user_id: profile.id, name: ctName, phone: ctPhone, source: "whatsapp", type: "person", category: null } as any,
           { onConflict: "user_id,phone" }
         );
-        const firstName = csName.split(" ")[0];
+        const firstName = ctName.split(" ")[0];
         responseText = error
           ? `⚠️ Erro ao salvar. Tente de novo.`
-          : `✅ *${csName}* salvo nos seus contatos!\n\nAgora pode pedir:\n• _"Manda mensagem pro ${firstName} dizendo..."_\n• _"Marca reunião com ${firstName} amanhã às 14h"_`;
+          : `✅ *${ctName}* salvo como *Pessoa*!\n\nAgora pode pedir:\n• _"Manda mensagem pro ${firstName} dizendo..."_\n• _"Marca reunião com ${firstName} amanhã às 14h"_`;
+        pendingAction  = undefined;
+        pendingContext = undefined;
+
+      } else if (isBiz && ctName && ctPhone) {
+        // Pergunta categoria
+        const CATEGORIES = ["Pizzaria", "Restaurante", "Farmácia", "Mercado", "Padaria", "Lanchonete", "Sushi", "Hamburguer", "Açaí", "Serviço", "Outro"];
+        const catLines = CATEGORIES.slice(0, 9).map((c, i) => `*${i + 1}.* ${c}`).join("\n");
+        responseText   = `🏪 Qual categoria?\n\n${catLines}\n*10.* Serviço\n*11.* Outro\n\nResponda com o *número* ou o nome.`;
+        pendingAction  = "contact_save_category";
+        pendingContext = { name: ctName, phone: ctPhone };
+
       } else {
-        responseText = "Ok, contato não salvo. 👍";
+        responseText   = "Não entendi. Responde *Pessoa* ou *Estabelecimento*. 😊";
+        // mantém pendingAction e pendingContext inalterados para retry
+        pendingAction  = "contact_save_type";
+        pendingContext = ctx;
       }
-      pendingAction = undefined;
+
+    } else if (intent === "contact_save_category") {
+      // Usuário escolheu a categoria do estabelecimento
+      const ctx = (session?.pending_context ?? {}) as Record<string, unknown>;
+      const ccName  = (ctx.name  as string) || "";
+      const ccPhone = (ctx.phone as string) || "";
+
+      const CATEGORIES = ["pizzaria", "restaurante", "farmácia", "mercado", "padaria", "lanchonete", "sushi", "hamburguer", "açaí", "serviço", "outro"];
+      const LABELS     = ["Pizzaria", "Restaurante", "Farmácia", "Mercado", "Padaria", "Lanchonete", "Sushi", "Hamburguer", "Açaí", "Serviço", "Outro"];
+
+      let category = "";
+      const numMatch = text.trim().match(/^(\d+)/);
+      if (numMatch) {
+        const idx = parseInt(numMatch[1]) - 1;
+        if (idx >= 0 && idx < CATEGORIES.length) category = CATEGORIES[idx];
+      }
+      if (!category) {
+        const norm = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        const found = CATEGORIES.findIndex(c => norm.includes(c.normalize("NFD").replace(/[\u0300-\u036f]/g, "")));
+        if (found >= 0) category = CATEGORIES[found];
+      }
+      if (!category) category = "outro";
+
+      const label = LABELS[CATEGORIES.indexOf(category)] ?? "Outro";
+
+      const { error } = await supabase.from("contacts").upsert(
+        { user_id: profile.id, name: ccName, phone: ccPhone, source: "whatsapp", type: "business", category } as any,
+        { onConflict: "user_id,phone" }
+      );
+      responseText = error
+        ? `⚠️ Erro ao salvar. Tente de novo.`
+        : `✅ *${ccName}* salvo como *Estabelecimento* (${label})!\n\nAgora posso fazer pedidos lá pra você. Basta dizer:\n_"Jarvis, pede uma pizza de calabresa na ${ccName}"_ 🍕`;
+      pendingAction  = undefined;
       pendingContext = undefined;
 
     } else if (intent === "reminder_delegate") {

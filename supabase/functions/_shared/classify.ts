@@ -44,6 +44,8 @@ export type Intent =
   | "meeting_invite_confirm"
   | "contact_save"
   | "contact_save_confirm"
+  | "contact_save_type"
+  | "contact_save_category"
   | "list_contacts"
   | "reminder_delegate"
   | "finance_delete_confirm"
