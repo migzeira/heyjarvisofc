@@ -40,6 +40,7 @@ export type Intent =
   | "shadow_reminder_confirm"
   | "send_to_contact"
   | "schedule_meeting"
+  | "meeting_invite_confirm"
   | "contact_save"
   | "contact_save_confirm"
   | "list_contacts"
@@ -154,13 +155,15 @@ export function classifyIntent(msg: string): Intent {
   )
     return "contact_save";
 
-  // Agendar reunião com Google Meet E enviar link para o contato
-  // Só dispara quando o usuário explicitamente pede pra mandar/notificar o contato
-  // Ex: "marca reunião com Guilherme e manda o link pra ele"
-  //     "agenda call com João e avisa ele" / "cria meet com Maria e envia o convite"
+  // Agendar reunião com Google Meet COM um contato (nome após "com")
+  // Dispara pra qualquer "marca/agenda/cria reunião/call com [Nome]" — handler
+  // cria o evento, e SE o nome for um contato salvo, pergunta se quer enviar
+  // o convite pra essa pessoa. Se nao for contato salvo, fallback pra agenda_create.
+  // Ex: "marca reunião com Cibele amanhã 10h sobre dinheiro"
+  //     "agenda call com João sexta 14h"
+  //     "marca reuniao com Guilherme e manda o link pra ele" (compatível com pedido explícito)
   if (
-    /\b(marca(r)?|agenda(r)?|cria(r)?|marcar)\s+(uma?\s+)?(reuniao|meeting|call|chamada|videochamada|videoconferencia|conferencia)\s+(com|pra|para)\s+\w/i.test(m) &&
-    /\b(manda(r)?|envia(r)?|avisa(r)?|notifica(r)?|compartilha(r)?)\s+(o\s+)?(link|convite|invite|meet|reuniao)\b|\b(e\s+)?(manda|envia|avisa)\s+(pra|para|ele|ela)\b/i.test(m)
+    /\b(marca(r)?|agenda(r)?|cria(r)?|marcar)\s+(uma?\s+)?(reuniao|meeting|call|chamada|videochamada|videoconferencia|conferencia)\s+(com|pra|para)\s+(o\s+|a\s+|os\s+|as\s+)?[a-záéíóúâêîôûãõç]/i.test(m)
   )
     return "schedule_meeting";
 

@@ -5021,7 +5021,7 @@ async function handleScheduleMeeting(
   userNickname: string | null,
   pushName: string,
   language: string,
-): Promise<string> {
+): Promise<{ response: string; pendingAction?: string; pendingContext?: unknown }> {
   const today = new Date().toLocaleDateString("sv-SE", { timeZone: userTz });
 
   // Extrai nome do contato — "com [o/a/os/as] NomeProprio"
@@ -5029,9 +5029,11 @@ async function handleScheduleMeeting(
   const contactMatch = text.match(/com\s+(?:o|a|os|as)\s+([A-Za-záéíóúâêîôûãõçÁÉÍÓÚÂÊÎÔÛÃÕÇ][a-záéíóúâêîôûãõç]+(?:\s+[A-Za-záéíóúâêîôûãõçÁÉÍÓÚÂÊÎÔÛÃÕÇ][a-záéíóúâêîôûãõç]+)*)/i)
     ?? text.match(/com\s+([A-Za-záéíóúâêîôûãõçÁÉÍÓÚÂÊÎÔÛÃÕÇ][a-záéíóúâêîôûãõç]+(?:\s+[A-Za-záéíóúâêîôûãõçÁÉÍÓÚÂÊÎÔÛÃÕÇ][a-záéíóúâêîôûãõç]+)*)/i);
   if (!contactMatch) {
-    return "Não identifiquei com quem marcar a reunião. Tente: _Marca reunião com Guilherme amanhã às 14h_";
+    // Sem nome após "com" → trata como agenda_create normal
+    const fallback = await handleAgendaCreate(userId, replyTo, text, null, language, userNickname, userTz);
+    return { response: fallback.response, pendingAction: fallback.pendingAction, pendingContext: fallback.pendingContext };
   }
-  // Normaliza para Title Case: "GUILHERME" → "Guilherme", "guilherme" → "Guilherme"
+  // Normaliza para Title Case
   const contactName = contactMatch[1].split(/\s+/).map(w =>
     w ? w.charAt(0).toUpperCase() + w.slice(1).toLowerCase() : w
   ).join(" ");
@@ -5044,10 +5046,10 @@ async function handleScheduleMeeting(
     .limit(1)
     .maybeSingle();
 
+  // Contato NÃO está salvo → cria evento de agenda normalmente, sem perguntar nada
   if (!found) {
-    // Contato não está salvo — cria evento de agenda normalmente com o nome como título
     const fallback = await handleAgendaCreate(userId, replyTo, text, null, language, userNickname, userTz);
-    return fallback.response;
+    return { response: fallback.response, pendingAction: fallback.pendingAction, pendingContext: fallback.pendingContext };
   }
 
   // Extrai data/hora usando extractEvent (IA)
@@ -5055,22 +5057,30 @@ async function handleScheduleMeeting(
   try {
     extracted = await extractEvent(text, today, language);
   } catch {
-    return "Não consegui entender a data. Tente: _Marca reunião com [Nome] amanhã às 14h_";
+    return { response: "Não consegui entender a data. Tente: _Marca reunião com [Nome] amanhã às 14h_" };
   }
 
   if (!extracted?.date) {
-    return `Para marcar com *${found.name}*, me diga a data e hora. Ex: _amanhã às 14h_ ou _sexta às 10h_`;
+    return { response: `Para marcar com *${found.name}*, me diga a data e hora. Ex: _amanhã às 14h_ ou _sexta às 10h_` };
   }
 
-  const title = `Reunião com ${found.name}`;
-  const description = `Reunião agendada pelo ${agentName} — assistente de ${userNickname || pushName}`;
+  // Extrai assunto/motivo da reunião — "sobre X", "tema X", "assunto X", "pra falar de X"
+  const subjectMatch = text.match(/\b(?:sobre|tema|assunto|motivo|pra falar (?:de|sobre)|pra tratar(?: de)?|para falar (?:de|sobre)|para tratar(?: de)?)\s+([^.!?]+?)(?:\s*[.!?]|$)/i);
+  const subject = subjectMatch?.[1]?.trim() ?? null;
 
-  // Cria evento no Google Calendar com Google Meet — passa userTz
+  const title = subject
+    ? `Reunião com ${found.name} — ${subject}`
+    : `Reunião com ${found.name}`;
+  const description = subject
+    ? `Reunião sobre: ${subject}\nAgendada pelo ${agentName} — assistente de ${userNickname || pushName}`
+    : `Reunião agendada pelo ${agentName} — assistente de ${userNickname || pushName}`;
+
+  // Cria evento no Google Calendar com Google Meet
   const { eventId, meetLink } = await createCalendarEventWithMeet(
     userId, title, extracted.date, extracted.time ?? null, null, description, null, userTz
   );
 
-  // Salva na tabela events
+  // Salva na tabela events (incluindo meeting_url pra evitar false positives no poll)
   await supabase.from("events").insert({
     user_id: userId,
     title,
@@ -5079,76 +5089,79 @@ async function handleScheduleMeeting(
     description,
     status: "confirmed",
     google_event_id: eventId ?? null,
+    meeting_url: meetLink ?? null,
     source: "whatsapp_meeting",
   });
 
-  // Agenda lembretes 10 min antes (se tiver horário)
+  // Agenda lembrete 10 min antes pro usuário (NÃO pro contato — só envia se ele confirmar)
   if (extracted.time) {
     try {
       const meetingDt = new Date(`${extracted.date}T${extracted.time}:00`);
       const reminderAt = new Date(meetingDt.getTime() - 10 * 60_000).toISOString();
       const meetSuffix = meetLink ? `\n\n🔗 ${meetLink}` : "";
 
-      await supabase.from("reminders").insert([
-        {
-          user_id: userId,
-          whatsapp_number: replyTo,
-          title: `Reunião com ${found.name} em 10 min`,
-          message: `⏰ *Lembrete!*\nDaqui 10 minutos você tem reunião com *${found.name}*${meetSuffix}`,
-          send_at: reminderAt,
-          recurrence: "none",
-          status: "pending",
-          source: "meeting_reminder",
-        },
-        {
-          user_id: userId,
-          whatsapp_number: found.phone,
-          title: `Lembrete reunião em 10 min`,
-          message: `⏰ *Lembrete, ${found.name.split(" ")[0]}!*\n\nDaqui 10 minutos você tem reunião com *${userNickname || pushName}*!${meetSuffix}\n\n_— ${agentName}, assistente virtual de ${userNickname || pushName}_`,
-          send_at: reminderAt,
-          recurrence: "none",
-          status: "pending",
-          source: "meeting_reminder_contact",
-        },
-      ]);
+      await supabase.from("reminders").insert({
+        user_id: userId,
+        whatsapp_number: replyTo,
+        title: `Reunião com ${found.name} em 10 min`,
+        message: `⏰ *Lembrete!*\nDaqui 10 minutos você tem reunião com *${found.name}*${subject ? ` sobre _${subject}_` : ""}${meetSuffix}`,
+        send_at: reminderAt,
+        recurrence: "none",
+        status: "pending",
+        source: "meeting_reminder",
+      });
     } catch (e) {
       console.error("[schedule_meeting] reminder insert error:", e);
     }
   }
 
-  // Busca telefone real do usuário para o CTA
-  const { data: userProfile } = await supabase
-    .from("profiles")
-    .select("phone_number")
-    .eq("id", userId)
-    .maybeSingle();
-  const userPhone = phoneForDisplay(userProfile?.phone_number ?? replyTo);
-
-  // Notifica o contato via WhatsApp — mensagem criativa com CTA
   const dateLabel = formatDateBR(extracted.date);
   const timeLabel = extracted.time ? ` às *${extracted.time}*` : "";
-  const contactFirstName = found.name.split(" ")[0];
-  const senderName = userNickname || pushName || "seu contato";
-  const contactMsg =
-    `Olá, *${contactFirstName}*! 👋\n\n` +
-    `Aqui é o *${agentName}*, assistente virtual de *${senderName}*.\n\n` +
-    `Ele(a) pediu para marcar uma reunião com você:\n\n` +
-    `📅 *${dateLabel}*${timeLabel}` +
-    (meetLink ? `\n🔗 *Link da reunião:*\n${meetLink}` : "") +
-    buildJarvisCTA(senderName, userPhone);
+  const nameGreet = userNickname ? `, ${userNickname}` : "";
 
-  sendText(found.phone, contactMsg).catch(() => {});
-
-  // Resposta ao usuário
-  let response =
-    `✅ Reunião agendada com *${found.name}*!\n\n` +
+  // 1ª mensagem: confirmação pro usuário
+  let confirmation =
+    `✅ *Reunião agendada${nameGreet}!*\n\n` +
+    `📌 ${title}\n` +
     `📅 ${dateLabel}${timeLabel}`;
-  if (meetLink) response += `\n\n🔗 *Link Meet:*\n${meetLink}`;
-  response +=
-    `\n\n📱 Mandei o convite para *${found.name}* pelo WhatsApp` +
-    (extracted.time ? " e vou lembrar vocês 10 minutos antes. ⏰" : ".");
+  if (meetLink) confirmation += `\n🔗 *Google Meet:*\n${meetLink}`;
+  if (extracted.time) confirmation += `\n🔔 Te lembro 10 min antes`;
 
-  return response;
+  await sendText(replyTo, confirmation).catch((e) =>
+    console.error("[schedule_meeting] confirmation sendText failed:", e)
+  );
+
+  // 2ª mensagem: pergunta se quer enviar pro contato (só faz sentido se tiver horário definido)
+  if (extracted.time) {
+    await sendButtons(
+      replyTo,
+      `Quer que eu envie o convite pra ${found.name.split(" ")[0]}? 📨`,
+      `Vou mandar uma mensagem no WhatsApp dela com o link Meet, data e hora.`,
+      [
+        { id: "MEETING_INVITE_YES", text: "✅ Sim, envia" },
+        { id: "MEETING_INVITE_NO", text: "❌ Não, deixa" },
+      ],
+    ).catch((e) => console.error("[schedule_meeting] sendButtons failed:", e));
+
+    return {
+      response: "", // já enviamos tudo via sendText/sendButtons
+      pendingAction: "meeting_invite_confirm",
+      pendingContext: {
+        contact_phone: found.phone,
+        contact_name: found.name,
+        contact_first: found.name.split(" ")[0],
+        meet_link: meetLink ?? null,
+        date_label: dateLabel,
+        time_label: extracted.time,
+        subject,
+        sender_name: userNickname || pushName || "seu contato",
+        agent_name: agentName,
+      },
+    };
+  }
+
+  // Sem horário → não pergunta sobre invite (não daria pra mandar lembrete pro contato)
+  return { response: "" };
 }
 
 const CATEGORY_EMOJI: Record<string, string> = {
@@ -6328,9 +6341,103 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       );
 
     } else if (intent === "schedule_meeting") {
-      responseText = await handleScheduleMeeting(
+      const meetResult = await handleScheduleMeeting(
         profile.id, sendPhone || replyTo, text, userTz, agentName, userNickname, pushName, language
       );
+      responseText = meetResult.response;
+      pendingAction = meetResult.pendingAction;
+      pendingContext = meetResult.pendingContext;
+
+    } else if (intent === "meeting_invite_confirm") {
+      const ctx = (session?.pending_context ?? {}) as Record<string, unknown>;
+      const msgLow = text.toLowerCase().trim();
+      const yes =
+        text === "BUTTON:MEETING_INVITE_YES" ||
+        /^(1|sim|envia|envia(r)?|manda(r)?|pode|claro|isso|por favor|s|y|yes|ok|beleza|blz|com certeza)\b/.test(msgLow);
+      const no =
+        text === "BUTTON:MEETING_INVITE_NO" ||
+        /^(2|nao|n|não|deixa|deixa pra la|esquece|nem|cancela|nope|nah|no)\b/.test(msgLow);
+
+      if (yes) {
+        const contactPhone = ctx.contact_phone as string | undefined;
+        const contactFirst = (ctx.contact_first as string) || "Contato";
+        const senderName = (ctx.sender_name as string) || "seu contato";
+        const agentN = (ctx.agent_name as string) || agentName;
+        const dateLbl = (ctx.date_label as string) || "";
+        const timeLbl = ctx.time_label ? ` às *${ctx.time_label}*` : "";
+        const meet = ctx.meet_link as string | null;
+        const subj = ctx.subject as string | null;
+
+        if (!contactPhone) {
+          responseText = "Não consegui encontrar o telefone do contato. 😕";
+        } else {
+          // Busca telefone real do user pra CTA
+          const { data: userProfile } = await supabase
+            .from("profiles")
+            .select("phone_number")
+            .eq("id", profile.id)
+            .maybeSingle();
+          const userPhoneDisplay = phoneForDisplay(userProfile?.phone_number ?? replyTo);
+
+          const subjectLine = subj ? `\n📝 *Assunto:* ${subj}` : "";
+          const meetLine = meet ? `\n🔗 *Link da reunião:*\n${meet}` : "";
+          const contactMsg =
+            `Olá, *${contactFirst}*! 👋\n\n` +
+            `Aqui é o *${agentN}*, assistente virtual de *${senderName}*.\n\n` +
+            `Ele(a) marcou uma reunião com você:\n\n` +
+            `📅 *${dateLbl}*${timeLbl}` +
+            subjectLine +
+            meetLine +
+            buildJarvisCTA(senderName, userPhoneDisplay);
+
+          try {
+            await sendText(contactPhone, contactMsg);
+            // Agenda lembrete 10 min antes pro contato também
+            if (ctx.time_label) {
+              const dateMatch = (dateLbl || "").match(/(\d{1,2}) de (\w+)/);
+              // event_date original veio do extract — pra simplificar, busca o evento mais recente desse user com esse título
+              const todayLocal = new Date().toLocaleDateString("sv-SE", { timeZone: userTz });
+              const { data: ev } = await supabase
+                .from("events")
+                .select("event_date, event_time")
+                .eq("user_id", profile.id)
+                .eq("source", "whatsapp_meeting")
+                .gte("event_date", todayLocal)
+                .order("created_at", { ascending: false })
+                .limit(1)
+                .maybeSingle();
+              if (ev?.event_date && ev?.event_time) {
+                const meetingDt = new Date(`${ev.event_date}T${ev.event_time.slice(0, 5)}:00`);
+                const reminderAt = new Date(meetingDt.getTime() - 10 * 60_000).toISOString();
+                if (new Date(reminderAt) > new Date()) {
+                  const meetSuffix = meet ? `\n\n🔗 ${meet}` : "";
+                  await supabase.from("reminders").insert({
+                    user_id: profile.id,
+                    whatsapp_number: contactPhone,
+                    title: `Lembrete reunião em 10 min`,
+                    message: `⏰ *Lembrete, ${contactFirst}!*\n\nDaqui 10 minutos você tem reunião com *${senderName}*!${subj ? `\n📝 Assunto: _${subj}_` : ""}${meetSuffix}\n\n_— ${agentN}, assistente virtual de ${senderName}_`,
+                    send_at: reminderAt,
+                    recurrence: "none",
+                    status: "pending",
+                    source: "meeting_reminder_contact",
+                  });
+                }
+              }
+            }
+            responseText = `📤 Convite enviado pra *${contactFirst}*! Vou lembrar vocês 10 min antes. ⏰`;
+          } catch (sendErr) {
+            console.error("[meeting_invite_confirm] sendText to contact failed:", sendErr);
+            responseText = `❌ Não consegui enviar pro *${contactFirst}*. Verifica se o número dele(a) está certo nos seus contatos.`;
+          }
+        }
+      } else if (no) {
+        responseText = `👍 Beleza, não enviei pra ${(ctx.contact_first as string) || "ele(a)"}. A reunião está marcada só pra você.`;
+      } else {
+        // Resposta ambígua — pergunta de novo mantendo o pending
+        responseText = `Não entendi. Quer que eu envie o convite pra *${ctx.contact_first || "o contato"}*?\n\n*1.* ✅ Sim, envia\n*2.* ❌ Não, deixa`;
+        pendingAction = "meeting_invite_confirm";
+        pendingContext = ctx;
+      }
 
     } else {
       // Chat geral com IA (moduleChat já verificado acima via moduleActive)
