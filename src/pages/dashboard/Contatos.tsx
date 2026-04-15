@@ -8,7 +8,8 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
-import { Plus, Trash2, UserCircle2, Search, Phone, Pencil, Check, X } from "lucide-react";
+import { Plus, Trash2, UserCircle2, Search, Phone, Pencil, Check, X, Store, User } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 interface Contact {
   id: string;
@@ -17,7 +18,23 @@ interface Contact {
   notes: string | null;
   source: string;
   created_at: string;
+  type: "person" | "business";
+  category: string | null;
 }
+
+const BUSINESS_CATEGORIES = [
+  { value: "pizzaria",    label: "Pizzaria" },
+  { value: "restaurante", label: "Restaurante" },
+  { value: "farmacia",    label: "Farmácia" },
+  { value: "mercado",     label: "Mercado / Supermercado" },
+  { value: "padaria",     label: "Padaria / Confeitaria" },
+  { value: "lanchonete",  label: "Lanchonete / Fast Food" },
+  { value: "sushi",       label: "Japonês / Sushi" },
+  { value: "hamburguer",  label: "Hamburgueria" },
+  { value: "acai",        label: "Açaí / Sorveteria" },
+  { value: "servico",     label: "Serviço (encanador, eletricista...)" },
+  { value: "outro",       label: "Outro estabelecimento" },
+];
 
 export default function Contatos() {
   const { user } = useAuth();
@@ -28,6 +45,8 @@ export default function Contatos() {
   const [newName, setNewName] = useState("");
   const [newPhone, setNewPhone] = useState("");
   const [newNotes, setNewNotes] = useState("");
+  const [newType, setNewType] = useState<"person" | "business">("person");
+  const [newCategory, setNewCategory] = useState("");
   const [saving, setSaving] = useState(false);
 
   // Inline edit state
@@ -107,7 +126,15 @@ export default function Contatos() {
     if (!phone.startsWith("55") && phone.length <= 11) phone = `55${phone}`;
 
     const { error } = await supabase.from("contacts").upsert(
-      { user_id: user!.id, name: newName.trim(), phone, notes: newNotes.trim() || null, source: "manual" },
+      {
+        user_id: user!.id,
+        name: newName.trim(),
+        phone,
+        notes: newNotes.trim() || null,
+        source: "manual",
+        type: newType,
+        category: newType === "business" ? (newCategory || null) : null,
+      },
       { onConflict: "user_id,phone" }
     );
     setSaving(false);
@@ -117,7 +144,7 @@ export default function Contatos() {
       toast.success("Contato adicionado!");
       setAdding(false);
       setNewName(""); setNewPhone(""); setNewNotes("");
-      // Realtime will update the list automatically; load() as fallback
+      setNewType("person"); setNewCategory("");
       load();
     }
   };
@@ -210,19 +237,74 @@ export default function Contatos() {
         <Card className="bg-card border-border">
           <CardHeader><CardTitle className="text-base">Novo contato</CardTitle></CardHeader>
           <CardContent className="space-y-3">
+            {/* Tipo: Pessoa ou Estabelecimento */}
+            <div className="space-y-1">
+              <Label className="text-xs">Tipo *</Label>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => { setNewType("person"); setNewCategory(""); }}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md border text-sm transition-colors ${
+                    newType === "person"
+                      ? "bg-primary text-primary-foreground border-primary"
+                      : "bg-card border-border text-muted-foreground hover:border-primary/50"
+                  }`}
+                >
+                  <User className="h-3.5 w-3.5" /> Pessoa
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setNewType("business")}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md border text-sm transition-colors ${
+                    newType === "business"
+                      ? "bg-primary text-primary-foreground border-primary"
+                      : "bg-card border-border text-muted-foreground hover:border-primary/50"
+                  }`}
+                >
+                  <Store className="h-3.5 w-3.5" /> Estabelecimento
+                </button>
+              </div>
+            </div>
+
             <div className="grid sm:grid-cols-2 gap-3">
               <div className="space-y-1">
-                <Label className="text-xs">Nome *</Label>
-                <Input value={newName} onChange={e => setNewName(e.target.value)} placeholder="Ex: Cibele Fernandes" />
+                <Label className="text-xs">{newType === "business" ? "Nome do estabelecimento *" : "Nome *"}</Label>
+                <Input
+                  value={newName}
+                  onChange={e => setNewName(e.target.value)}
+                  placeholder={newType === "business" ? "Ex: Pizzaria Kadalora" : "Ex: Cibele Fernandes"}
+                />
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">Telefone (com DDD) *</Label>
                 <Input value={newPhone} onChange={e => setNewPhone(e.target.value)} placeholder="11 99999-9999" />
               </div>
             </div>
+
+            {/* Categoria — só para estabelecimentos */}
+            {newType === "business" && (
+              <div className="space-y-1">
+                <Label className="text-xs">Categoria</Label>
+                <Select value={newCategory} onValueChange={setNewCategory}>
+                  <SelectTrigger className="text-sm">
+                    <SelectValue placeholder="Selecione o tipo de estabelecimento" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {BUSINESS_CATEGORIES.map(c => (
+                      <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
             <div className="space-y-1">
-              <Label className="text-xs">Observações</Label>
-              <Input value={newNotes} onChange={e => setNewNotes(e.target.value)} placeholder="Ex: minha esposa, cliente VIP..." />
+              <Label className="text-xs">{newType === "business" ? "Observações (ex: horário de funcionamento)" : "Observações"}</Label>
+              <Input
+                value={newNotes}
+                onChange={e => setNewNotes(e.target.value)}
+                placeholder={newType === "business" ? "Ex: Aberto até 23h, pede mínimo R$30" : "Ex: minha esposa, cliente VIP..."}
+              />
             </div>
             <Button
               onClick={handleAdd}
@@ -266,10 +348,13 @@ export default function Contatos() {
             <CardContent className="py-3 px-4">
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-3 min-w-0">
-                  <div className="flex-shrink-0 h-9 w-9 rounded-full bg-primary/10 flex items-center justify-center">
-                    <span className="text-sm font-semibold text-primary">
-                      {c.name.charAt(0).toUpperCase()}
-                    </span>
+                  <div className={`flex-shrink-0 h-9 w-9 rounded-full flex items-center justify-center ${
+                    c.type === "business" ? "bg-amber-500/10" : "bg-primary/10"
+                  }`}>
+                    {c.type === "business"
+                      ? <Store className="h-4 w-4 text-amber-400" />
+                      : <span className="text-sm font-semibold text-primary">{c.name.charAt(0).toUpperCase()}</span>
+                    }
                   </div>
                   <div className="min-w-0 flex-1">
                     {/* Inline name edit */}
@@ -319,9 +404,16 @@ export default function Contatos() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
-                  <Badge variant="outline" className="text-xs hidden sm:flex">
-                    {c.source === "whatsapp" ? "📱 WhatsApp" : "✏️ Manual"}
-                  </Badge>
+                  {c.type === "business" ? (
+                    <Badge variant="outline" className="text-xs hidden sm:flex items-center gap-1 border-amber-500/40 text-amber-400">
+                      <Store className="h-3 w-3" />
+                      {BUSINESS_CATEGORIES.find(cat => cat.value === c.category)?.label ?? "Estabelecimento"}
+                    </Badge>
+                  ) : (
+                    <Badge variant="outline" className="text-xs hidden sm:flex">
+                      {c.source === "whatsapp" ? "📱 WhatsApp" : "✏️ Manual"}
+                    </Badge>
+                  )}
                   <button
                     onClick={() => handleDelete(c.id, c.name)}
                     className="text-muted-foreground hover:text-destructive transition-colors"

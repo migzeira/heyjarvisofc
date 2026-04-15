@@ -11,7 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
 import {
   Save, Clock, CheckCircle, XCircle, Info, Smartphone, Lock, AlertTriangle,
-  Crown, ExternalLink, Calendar, MessageSquare, Loader2,
+  Crown, ExternalLink, Calendar, MessageSquare, Loader2, MapPin, CreditCard,
 } from "lucide-react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -142,6 +142,17 @@ export default function MeuPerfil() {
   const [linking, setLinking] = useState(false);
   const [linkingStatus, setLinkingStatus] = useState<'idle' | 'linking' | 'linked' | 'pending'>('idle');
 
+  // Dados de entrega (seção independente — salva separado)
+  const [deliveryStreet, setDeliveryStreet] = useState("");
+  const [deliveryNumber, setDeliveryNumber] = useState("");
+  const [deliveryComplement, setDeliveryComplement] = useState("");
+  const [deliveryNeighborhood, setDeliveryNeighborhood] = useState("");
+  const [deliveryCity, setDeliveryCity] = useState("");
+  const [deliveryReference, setDeliveryReference] = useState("");
+  const [paymentPreference, setPaymentPreference] = useState("debito");
+  const [cpfOrders, setCpfOrders] = useState("");
+  const [savingDelivery, setSavingDelivery] = useState(false);
+
   // Phone fields (split from stored number)
   const [selectedDdi, setSelectedDdi] = useState("55");
   const [localNumber, setLocalNumber] = useState("");
@@ -158,6 +169,19 @@ export default function MeuPerfil() {
       setSelectedDdi(ddi);
       setLocalNumber(local);
     }
+
+    // Carrega dados de entrega
+    if (data) {
+      setDeliveryStreet(data.delivery_street ?? "");
+      setDeliveryNumber(data.delivery_number ?? "");
+      setDeliveryComplement(data.delivery_complement ?? "");
+      setDeliveryNeighborhood(data.delivery_neighborhood ?? "");
+      setDeliveryCity(data.delivery_city ?? "");
+      setDeliveryReference(data.delivery_reference ?? "");
+      setPaymentPreference(data.payment_preference ?? "debito");
+      setCpfOrders(data.cpf_orders ?? "");
+    }
+
     setLoading(false);
   };
 
@@ -396,6 +420,23 @@ export default function MeuPerfil() {
   const daysLeft = accessUntilDate
     ? Math.max(0, Math.ceil((accessUntilDate.getTime() - Date.now()) / 86400000))
     : null;
+
+  const handleSaveDelivery = async () => {
+    setSavingDelivery(true);
+    const { error } = await supabase.from("profiles").update({
+      delivery_street:      deliveryStreet.trim() || null,
+      delivery_number:      deliveryNumber.trim() || null,
+      delivery_complement:  deliveryComplement.trim() || null,
+      delivery_neighborhood: deliveryNeighborhood.trim() || null,
+      delivery_city:        deliveryCity.trim() || null,
+      delivery_reference:   deliveryReference.trim() || null,
+      payment_preference:   paymentPreference,
+      cpf_orders:           cpfOrders.trim() || null,
+    } as any).eq("id", user!.id);
+    setSavingDelivery(false);
+    if (error) toast.error("Erro ao salvar dados de entrega");
+    else toast.success("Dados de entrega salvos!");
+  };
 
   if (loading) return <Skeleton className="h-64 max-w-lg" />;
   if (!profile) return null;
@@ -742,6 +783,124 @@ export default function MeuPerfil() {
         <Save className="mr-2 h-4 w-4" />
         {saving ? "Salvando..." : "Salvar"}
       </Button>
+
+      {/* ── Dados de Entrega ── */}
+      <Card className="bg-card border-border">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base flex items-center gap-2">
+            <MapPin className="h-5 w-5 text-muted-foreground" />
+            Dados de Entrega
+          </CardTitle>
+          <p className="text-xs text-muted-foreground mt-1">
+            Salve seu endereço e preferências para que o Jarvis faça pedidos por você sem precisar perguntar toda vez.
+            <br />
+            Ex: <em>"Jarvis, pede uma pizza de calabresa na Pizzaria Kadalora"</em> — ele usa esses dados automaticamente.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-4">
+
+          {/* Endereço */}
+          <div className="space-y-1">
+            <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Endereço</Label>
+          </div>
+          <div className="grid sm:grid-cols-3 gap-3">
+            <div className="sm:col-span-2 space-y-1">
+              <Label className="text-xs">Rua / Avenida</Label>
+              <Input
+                value={deliveryStreet}
+                onChange={e => setDeliveryStreet(e.target.value)}
+                placeholder="Ex: Rua das Flores"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Número</Label>
+              <Input
+                value={deliveryNumber}
+                onChange={e => setDeliveryNumber(e.target.value)}
+                placeholder="Ex: 123"
+              />
+            </div>
+          </div>
+          <div className="grid sm:grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <Label className="text-xs">Complemento</Label>
+              <Input
+                value={deliveryComplement}
+                onChange={e => setDeliveryComplement(e.target.value)}
+                placeholder="Ex: Apto 42, Bloco B"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Bairro</Label>
+              <Input
+                value={deliveryNeighborhood}
+                onChange={e => setDeliveryNeighborhood(e.target.value)}
+                placeholder="Ex: Jardim América"
+              />
+            </div>
+          </div>
+          <div className="grid sm:grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <Label className="text-xs">Cidade</Label>
+              <Input
+                value={deliveryCity}
+                onChange={e => setDeliveryCity(e.target.value)}
+                placeholder="Ex: São Paulo"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Referência (opcional)</Label>
+              <Input
+                value={deliveryReference}
+                onChange={e => setDeliveryReference(e.target.value)}
+                placeholder="Ex: Portão azul, próximo ao mercado"
+              />
+            </div>
+          </div>
+
+          {/* Pagamento */}
+          <div className="space-y-1 pt-1">
+            <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Pagamento preferido</Label>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {[
+              { value: "debito",   label: "Débito" },
+              { value: "credito",  label: "Crédito" },
+              { value: "pix",      label: "Pix" },
+              { value: "dinheiro", label: "Dinheiro" },
+            ].map(opt => (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => setPaymentPreference(opt.value)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md border text-sm transition-colors ${
+                  paymentPreference === opt.value
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "bg-card border-border text-muted-foreground hover:border-primary/50"
+                }`}
+              >
+                <CreditCard className="h-3.5 w-3.5" /> {opt.label}
+              </button>
+            ))}
+          </div>
+
+          {/* CPF */}
+          <div className="space-y-1">
+            <Label className="text-xs">CPF para nota fiscal (opcional)</Label>
+            <Input
+              value={cpfOrders}
+              onChange={e => setCpfOrders(e.target.value)}
+              placeholder="000.000.000-00"
+              className="max-w-xs font-mono"
+            />
+          </div>
+
+          <Button onClick={handleSaveDelivery} disabled={savingDelivery} size="sm" className="gap-2">
+            <Save className="h-4 w-4" />
+            {savingDelivery ? "Salvando..." : "Salvar dados de entrega"}
+          </Button>
+        </CardContent>
+      </Card>
     </div>
   );
 }

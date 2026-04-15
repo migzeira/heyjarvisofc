@@ -38,6 +38,7 @@ export type Intent =
   | "shadow_finance_confirm"
   | "shadow_event_confirm"
   | "shadow_reminder_confirm"
+  | "order_on_behalf"
   | "send_to_contact"
   | "schedule_meeting"
   | "meeting_invite_confirm"
@@ -176,6 +177,19 @@ export function classifyIntent(msg: string): Intent {
     /\bcontatos?\s+salvos?\b/i.test(m)
   )
     return "list_contacts";
+
+  // Fazer pedido em nome do usuario em um estabelecimento
+  // "pede uma pizza de calabresa na pizzaria kadalora"
+  // "faz um pedido no restaurante X"
+  // "pede um remedio na farmacia"
+  // Deve vir ANTES de send_to_contact para nao ser confundido
+  if (
+    /\b(ped(e|ir|ido)|faz(er)?\s+um\s+pedido|encomend(a|ar)|comand(a|ar))\b.{0,60}?\b(n[ao]\s+|n[ao]\s+)(pizzaria|restaurante|farmacia|mercado|padaria|lanchonete|sushi|hamburguer|acai|loja|estabelecimento)/i.test(m) ||
+    /\b(ped(e|ir))\b.{0,40}?\b(pizza|hamburguer|lanche|sushi|comida|remedio|medicamento|acai|delivery)\b/i.test(m) ||
+    /\b(pedir|pecar|encomendar)\s+(uma?|um)\s+\w.{0,60}?\b(n[ao]\s+|n[ao]\s+)\w/i.test(m) ||
+    /\bfaz(er)?\s+(um\s+)?(pedido|order)\b.{0,60}?\b(n[ao]|para|pra)\b/i.test(m)
+  )
+    return "order_on_behalf";
 
   // Enviar mensagem para um contato salvo
   // "manda mensagem pra cibele dizendo X" / "manda uma mensagem pro Joao que..."

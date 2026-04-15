@@ -4923,6 +4923,295 @@ async function handleIncomingRelay(
   return true;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ORDER ON BEHALF — Jarvis faz pedidos em estabelecimentos pelo usuario
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Intercepta mensagens vindas de estabelecimentos durante uma sessao de pedido ativa.
+ * Se encontrar sessao ativa → usa IA pra decidir se responde sozinho ou escala pro usuario.
+ * Retorna true se tratou a mensagem, false para continuar fluxo normal.
+ */
+async function handleActiveOrderSession(
+  businessPhone: string,
+  text: string,
+): Promise<boolean> {
+  const now = new Date().toISOString();
+  const rawDigits = businessPhone.replace(/\D/g, "");
+  const phone55   = rawDigits.startsWith("55") ? rawDigits : `55${rawDigits}`;
+  const phoneNo55 = rawDigits.startsWith("55") ? rawDigits.slice(2) : rawDigits;
+
+  const { data: session } = await supabase
+    .from("order_sessions")
+    .select("*")
+    .or(`business_phone.eq.${phone55},business_phone.eq.${phoneNo55}`)
+    .eq("status", "active")
+    .gt("expires_at", now)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!session) return false;
+
+  const userPhone    = session.user_phone as string;
+  const businessName = session.business_name as string;
+  const orderSummary = session.order_summary as string;
+  const payment      = session.payment_preference as string;
+
+  // Usa IA pra classificar se e uma resposta padrao que Jarvis pode tratar sozinho
+  const aiDecision = await chat([
+    {
+      role: "system",
+      content:
+        `Você é o Jarvis, assistente virtual. Você fez um pedido em nome do usuário em "${businessName}".
+Pedido: "${orderSummary}". Pagamento preferido: ${payment}.
+
+Uma mensagem chegou do estabelecimento. Decida:
+- Se for confirmação de valor, forma de pagamento ou tempo de entrega → responda autonomamente de forma educada e curta (máximo 2 linhas).
+- Se for qualquer outra coisa (item indisponível, pergunta fora do script, problema) → responda EXATAMENTE com: ESCALAR: [mensagem original]
+
+Responda APENAS com a resposta para o estabelecimento OU com ESCALAR: [mensagem].`,
+    },
+    { role: "user", content: text },
+  ]).catch(() => null);
+
+  const aiText = aiDecision ?? "";
+
+  if (aiText.startsWith("ESCALAR:")) {
+    // Repassa pro usuario imediatamente
+    const escalatedMsg = aiText.replace(/^ESCALAR:\s*/i, "").trim() || text;
+    await sendText(
+      userPhone,
+      `📞 *${businessName}* enviou:\n\n_"${escalatedMsg}"_\n\n💬 O que eu respondo? Manda aqui e eu repasso.`
+    ).catch(() => {});
+    // Salva contexto na sessao para o proximo turno do usuario
+    await supabase.from("order_sessions")
+      .update({ status: "waiting_user" } as any)
+      .eq("id", session.id)
+      .catch(() => {});
+  } else if (aiText.trim()) {
+    // Jarvis responde autonomamente ao estabelecimento
+    await sendText(businessPhone, aiText.trim()).catch(() => {});
+    // Notifica usuario do que aconteceu (silenciosamente, sem precisar responder)
+    await sendText(
+      userPhone,
+      `✅ *${businessName}* disse: _"${text}"_\n\nRespondi: _"${aiText.trim()}"_`
+    ).catch(() => {});
+  }
+
+  return true;
+}
+
+/**
+ * Intercepta resposta do usuario para repassar ao estabelecimento
+ * quando a sessao esta em estado "waiting_user".
+ */
+async function handleOrderUserRelay(
+  userPhone: string,
+  text: string,
+): Promise<boolean> {
+  const now = new Date().toISOString();
+  const rawDigits = userPhone.replace(/\D/g, "");
+  const phone55   = rawDigits.startsWith("55") ? rawDigits : `55${rawDigits}`;
+  const phoneNo55 = rawDigits.startsWith("55") ? rawDigits.slice(2) : rawDigits;
+
+  const { data: session } = await supabase
+    .from("order_sessions")
+    .select("*")
+    .or(`user_phone.eq.${phone55},user_phone.eq.${phoneNo55}`)
+    .eq("status", "waiting_user")
+    .gt("expires_at", now)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!session) return false;
+
+  const businessPhone = session.business_phone as string;
+  const businessName  = session.business_name  as string;
+
+  // Repassa resposta do usuario pro estabelecimento
+  await sendText(businessPhone, text).catch(() => {});
+  // Volta sessao pra "active" para continuar capturando respostas
+  await supabase.from("order_sessions")
+    .update({ status: "active" } as any)
+    .eq("id", session.id)
+    .catch(() => {});
+  // Confirma pro usuario
+  await sendText(
+    userPhone,
+    `✅ Repassei para *${businessName}*: _"${text}"_`
+  ).catch(() => {});
+
+  return true;
+}
+
+/**
+ * Processa pedido do usuario em um estabelecimento.
+ * Busca contato do tipo "business", pega dados de entrega do perfil,
+ * confirma com o usuario e envia mensagem profissional ao estabelecimento.
+ */
+async function handleOrderOnBehalf(
+  userId: string,
+  userPhone: string,
+  text: string,
+  agentName: string,
+  userNickname: string | null,
+  pushName: string,
+): Promise<{ response: string; pendingAction?: string; pendingContext?: unknown }> {
+  // Busca todos os contatos do tipo business do usuario
+  const { data: businesses } = await supabase
+    .from("contacts")
+    .select("*")
+    .eq("user_id", userId)
+    .eq("type", "business");
+
+  if (!businesses || businesses.length === 0) {
+    return {
+      response:
+        "Você ainda não tem estabelecimentos salvos nos seus contatos.\n\n" +
+        "Adicione um na aba *Contatos*, escolha o tipo *Estabelecimento* e salve o número. " +
+        "Depois é só pedir: _\"Jarvis, pede uma pizza de calabresa na Pizzaria Kadalora\"_ 🍕",
+    };
+  }
+
+  // Tenta identificar qual estabelecimento o usuario mencionou
+  const textLower = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  let found: Record<string, any> | null = null;
+  for (const b of businesses) {
+    const bName = (b.name as string).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    // Verifica se alguma palavra do nome do estabelecimento aparece no texto
+    const words = bName.split(/\s+/).filter((w: string) => w.length > 3);
+    if (words.some((w: string) => textLower.includes(w))) {
+      found = b as Record<string, any>;
+      break;
+    }
+  }
+
+  if (!found) {
+    const lista = businesses.map((b: any) => `• ${b.name}`).join("\n");
+    return {
+      response:
+        `Não identifiquei o estabelecimento no seu pedido. Seus estabelecimentos salvos:\n\n${lista}\n\n` +
+        `Tente ser mais específico, ex: _"Jarvis, pede uma pizza de calabresa na ${businesses[0]?.name}"_`,
+    };
+  }
+
+  // Busca dados de entrega do perfil
+  const { data: profileData } = await supabase
+    .from("profiles")
+    .select("delivery_street, delivery_number, delivery_complement, delivery_neighborhood, delivery_city, delivery_reference, payment_preference, cpf_orders, display_name")
+    .eq("id", userId)
+    .maybeSingle();
+
+  const senderName = userNickname || profileData?.display_name || pushName || "seu usuário";
+
+  // Monta endereco de entrega
+  const street       = profileData?.delivery_street ?? "";
+  const number       = profileData?.delivery_number ?? "";
+  const complement   = profileData?.delivery_complement ?? "";
+  const neighborhood = profileData?.delivery_neighborhood ?? "";
+  const city         = profileData?.delivery_city ?? "";
+  const reference    = profileData?.delivery_reference ?? "";
+  const payment      = profileData?.payment_preference ?? "débito";
+
+  const hasAddress = street && number;
+  const addressLine = hasAddress
+    ? `${street}, ${number}${complement ? `, ${complement}` : ""}${neighborhood ? ` — ${neighborhood}` : ""}${city ? `, ${city}` : ""}${reference ? ` (${reference})` : ""}`
+    : null;
+
+  // Extrai conteudo do pedido (tudo depois de palavras-chave)
+  const orderMatch = text.match(
+    /(?:pede?|fa[zç]|encomienda?|comanda?r?)\s+(?:um[a]?\s+)?(.+?)(?:\s+n[ao]\s+\w|\s+pra\s+\w|$)/i
+  );
+  const orderContent = orderMatch
+    ? orderMatch[1].trim()
+    : text.replace(/^.*(pede?|fa[zç])\s+/i, "").trim();
+
+  // Se nao tem endereco cadastrado, pede antes de confirmar
+  if (!hasAddress) {
+    return {
+      response:
+        `Antes de fazer o pedido na *${found.name}*, preciso do seu endereço de entrega.\n\n` +
+        `Você ainda não cadastrou. Acesse *Meu Perfil → Dados de Entrega* e salve seu endereço. 📍\n\n` +
+        `Depois é só repetir o pedido e eu envio direto!`,
+    };
+  }
+
+  // Monta confirmacao para o usuario
+  const confirmMsg =
+    `🛵 Confirma o pedido?\n\n` +
+    `🏪 *${found.name}*\n` +
+    `📝 *Pedido:* ${orderContent}\n` +
+    `📍 *Entrega:* ${addressLine}\n` +
+    `💳 *Pagamento:* ${payment}\n\n` +
+    `Responda *sim* para eu enviar agora.`;
+
+  return {
+    response: confirmMsg,
+    pendingAction: "order_confirm",
+    pendingContext: {
+      business_name:      found.name,
+      business_phone:     (found.phone as string).replace(/\D/g, ""),
+      order_content:      orderContent,
+      delivery_address:   addressLine,
+      payment_preference: payment,
+      sender_name:        senderName,
+      agent_name:         agentName,
+      user_phone:         userPhone,
+    },
+  };
+}
+
+/**
+ * Executa o pedido apos confirmacao do usuario ("sim").
+ * Envia mensagem profissional ao estabelecimento e cria a order_session.
+ */
+async function executeOrder(
+  userId: string,
+  userPhone: string,
+  ctx: Record<string, unknown>,
+): Promise<string> {
+  const businessName    = ctx.business_name    as string;
+  const businessPhone   = ctx.business_phone   as string;
+  const orderContent    = ctx.order_content    as string;
+  const deliveryAddress = ctx.delivery_address as string;
+  const payment         = ctx.payment_preference as string;
+  const senderName      = ctx.sender_name      as string;
+  const agentName       = (ctx.agent_name as string) || "Jarvis";
+
+  const outgoing =
+    `Olá! Meu nome é *${agentName}*, assistente virtual do *${senderName}*.\n\n` +
+    `Gostaria de fazer um pedido:\n\n` +
+    `📝 *Pedido:* ${orderContent}\n` +
+    `📍 *Endereço de entrega:* ${deliveryAddress}\n` +
+    `💳 *Pagamento:* ${payment}\n\n` +
+    `Pode confirmar o valor e o tempo estimado de entrega?\n\n` +
+    `——————————————\n` +
+    `Para falar diretamente com *${senderName}*, o número é: *${userPhone}*`;
+
+  await sendText(businessPhone, outgoing).catch(() => {});
+
+  // Cria order_session de 1h
+  const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+  await supabase.from("order_sessions").insert({
+    user_id:            userId,
+    user_phone:         userPhone,
+    business_phone:     businessPhone,
+    business_name:      businessName,
+    order_summary:      orderContent,
+    delivery_address:   deliveryAddress,
+    payment_preference: payment,
+    status:             "active",
+    expires_at:         expiresAt,
+  } as any).catch(() => {});
+
+  return (
+    `✅ Pedido enviado para *${businessName}*!\n\n` +
+    `Vou te avisar assim que eles responderem. Se falar algo que eu não souber responder, repasso pra você na hora. 🍕`
+  );
+}
+
 async function handleSendToContact(
   userId: string,
   replyTo: string,
@@ -5812,6 +6101,18 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       }
     }
 
+    // ── ORDER SESSION CHECK — intercepta mensagens de estabelecimentos durante pedido ativo ──
+    // Roda antes do relay e antes do fluxo normal.
+    // Se a mensagem veio de um estabelecimento com order_session ativa → trata e retorna.
+    if (fallbackPhone) {
+      try {
+        const orderHandled = await handleActiveOrderSession(fallbackPhone, text);
+        if (orderHandled) { log.push("order_session_handled"); return log; }
+      } catch (orderErr) {
+        console.error("[order] handleActiveOrderSession error:", orderErr);
+      }
+    }
+
     // ── RELAY CHECK — intercepta respostas de contatos externos ──
     // Roda antes do "unknown_number" para capturar contatos que nao sao usuarios Jarvis
     // e tambem antes do fluxo normal para usuarios Jarvis que estao respondendo um relay.
@@ -6391,6 +6692,35 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
         responseText = ""; // botão já enviado
       }
 
+    } else if (intent === "order_confirm" || session?.pending_action === "order_confirm") {
+      // Usuario confirmou (ou negou) o pedido ao estabelecimento
+      const ctx = (session?.pending_context ?? {}) as Record<string, unknown>;
+      const msgLow = text.toLowerCase().trim();
+      const yes = /^(1|sim|s|ok|confirma|pode|claro|envia|manda|vai|yes|yep|bora)\b/i.test(msgLow);
+      const no  = /^(2|nao|n|cancela|deixa|esquece|não|nope|cancelar)\b/i.test(msgLow);
+
+      if (yes && ctx.business_name) {
+        responseText  = await executeOrder(profile.id, sendPhone || replyTo, ctx);
+        pendingAction  = undefined;
+        pendingContext = undefined;
+      } else if (no) {
+        responseText  = "Ok, pedido cancelado! Pode pedir de novo quando quiser. 👍";
+        pendingAction  = undefined;
+        pendingContext = undefined;
+      } else {
+        // Nao entendeu — repete a confirmacao
+        responseText = "Responda *sim* para confirmar o pedido ou *não* para cancelar.";
+      }
+
+    } else if (intent === "order_user_relay" || session?.pending_action === "order_waiting_user") {
+      // Usuario enviou resposta para repassar ao estabelecimento
+      const handled = await handleOrderUserRelay(sendPhone || replyTo, text);
+      if (handled) {
+        responseText  = "";
+        pendingAction  = undefined;
+        pendingContext = undefined;
+      }
+
     } else if (intent === "contact_save_confirm") {
       // Usuário clicou em "💾 Salvar" ou "❌ Ignorar" após detectar contato
       const ctx = (session?.pending_context ?? {}) as Record<string, unknown>;
@@ -6473,6 +6803,14 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
         }).join("\n");
         responseText = `📇 *Seus contatos salvos (${allContacts.length}):*\n\n${lines}\n\nPara enviar mensagem: _"Manda pra [Nome] dizendo..."_`;
       }
+
+    } else if (intent === "order_on_behalf") {
+      const orderResult = await handleOrderOnBehalf(
+        profile.id, sendPhone || replyTo, text, agentName, userNickname, pushName
+      );
+      responseText  = orderResult.response;
+      pendingAction = orderResult.pendingAction;
+      pendingContext = orderResult.pendingContext;
 
     } else if (intent === "send_to_contact") {
       responseText = await handleSendToContact(
