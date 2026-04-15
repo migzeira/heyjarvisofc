@@ -637,7 +637,7 @@ export default function Lembretes() {
       {/* ── Sub-abas: Lembretes de Agenda ─────────────────────────────────────── */}
       {mainTab === "agenda" && (
         <div className="flex gap-2 flex-wrap pl-3 border-l-2 border-orange-500/30">
-          {(["all", "pending", "sent", "done"] as AgendaSub[]).map(sf => (
+          {(["pending", "done", "all", "sent"] as AgendaSub[]).map(sf => (
             <Button key={sf} variant={agendaSub === sf ? "secondary" : "ghost"} size="sm" className="h-7 text-xs" onClick={() => setAgendaSub(sf)}>
               {sf === "all" && "Todos"}
               {sf === "pending" && <>Pendentes {agendaPending > 0 && <Badge className="ml-1 text-[10px] h-3.5 px-1">{agendaPending}</Badge>}</>}
@@ -651,7 +651,7 @@ export default function Lembretes() {
       {/* ── Sub-abas: Lembretes de Mensagem ───────────────────────────────────── */}
       {mainTab === "message" && (
         <div className="flex gap-2 flex-wrap pl-3 border-l-2 border-indigo-500/30">
-          {(["all", "pending", "sent"] as MessageSub[]).map(sf => (
+          {(["pending", "all", "sent"] as MessageSub[]).map(sf => (
             <Button key={sf} variant={messageSub === sf ? "secondary" : "ghost"} size="sm" className="h-7 text-xs" onClick={() => setMessageSub(sf)}>
               {sf === "all" && "Todos"}
               {sf === "pending" && <>Pendentes {msgPending > 0 && <Badge className="ml-1 text-[10px] h-3.5 px-1">{msgPending}</Badge>}</>}
