@@ -3646,49 +3646,54 @@ serve(async (req) => {
   // ── ORDER SESSION CHECK (top-level) — intercepta QUALQUER mensagem de estabelecimento ──
   // Roda ANTES de tudo (isCrossJarvisReply, shadow, processMessage, unknown_number)
   // porque o estabelecimento NÃO é cliente Jarvis e seria descartado.
-  // WhatsApp Multi-Device envia @lid em vez do telefone real — precisamos resolver.
+  // Resolve LID→telefone e também busca por LID direto na order_sessions.
   if (text?.trim()) {
-    const senderDigits = remoteJid.replace(/@.*$/, "").replace(/[:\D]/g, "");
+    const senderRaw = remoteJid.replace(/@.*$/, "");
+    const senderDigits = senderRaw.replace(/[:\D]/g, "");
     const phoneCandidates = new Set<string>();
     if (senderDigits.length >= 10) phoneCandidates.add(senderDigits);
 
-    // Se veio como @lid, resolve pra telefone real via tabela conversations
-    // remoteJid pode ser "177945360519187@lid" ou "177945360519187:42@lid"
+    // Resolve LID → telefone real por múltiplas vias
     if (remoteJid.endsWith("@lid")) {
-      // Extrai apenas os dígitos base do LID (antes do : se houver)
-      const lidBase = remoteJid.replace(/@lid$/, "").replace(/:.*$/, "");
+      const lidBase = senderRaw.replace(/:.*$/, "");
 
-      // Busca por LIKE pra cobrir variações do lid salvo
-      const { data: convLid } = await supabase
-        .from("conversations")
-        .select("phone_number")
-        .like("whatsapp_lid", `${lidBase}%`)
-        .limit(1)
-        .maybeSingle();
-      if (convLid?.phone_number) {
-        const resolved = (convLid.phone_number as string).replace(/\D/g, "");
-        if (resolved) phoneCandidates.add(resolved);
-      }
+      // Via conversations (whatsapp_lid)
+      try {
+        const { data: convLid } = await supabase
+          .from("conversations")
+          .select("phone_number")
+          .like("whatsapp_lid", `${lidBase}%`)
+          .limit(1)
+          .maybeSingle();
+        if (convLid?.phone_number) {
+          phoneCandidates.add((convLid.phone_number as string).replace(/\D/g, ""));
+        }
+      } catch {}
 
-      // Busca em contacts também (estabelecimentos salvos pelo usuário)
-      const { data: contactMatch } = await supabase
-        .from("contacts")
-        .select("phone")
-        .eq("type", "business")
-        .like("phone", `%${lidBase.slice(-8)}%`)
-        .limit(1)
-        .maybeSingle();
-      if (contactMatch?.phone) {
-        const resolved = (contactMatch.phone as string).replace(/\D/g, "");
-        if (resolved) phoneCandidates.add(resolved);
-      }
+      // Via contacts (business, últimos dígitos do phone)
+      try {
+        const { data: contactMatch } = await supabase
+          .from("contacts")
+          .select("phone")
+          .eq("type", "business")
+          .limit(50);
+        if (contactMatch) {
+          for (const c of contactMatch) {
+            const cPhone = (c.phone as string).replace(/\D/g, "");
+            if (cPhone) phoneCandidates.add(cPhone);
+          }
+        }
+      } catch {}
 
-      // Fallback: resolve via Evolution API
-      const resolvedRaw = await resolveLidToPhone(remoteJid).catch(() => null);
-      const resolvedClean = sanitizePhone(resolvedRaw ?? "");
-      if (resolvedClean) phoneCandidates.add(resolvedClean);
+      // Via Evolution API
+      try {
+        const resolvedRaw = await resolveLidToPhone(remoteJid);
+        const resolvedClean = sanitizePhone(resolvedRaw ?? "");
+        if (resolvedClean) phoneCandidates.add(resolvedClean);
+      } catch {}
     }
 
+    // Tenta CADA candidato contra order_sessions ativas
     for (const phone of phoneCandidates) {
       try {
         const orderHandled = await handleActiveOrderSession(phone, text.trim());
@@ -3698,7 +3703,46 @@ serve(async (req) => {
           });
         }
       } catch (e) {
-        console.error("[order-toplevel] handleActiveOrderSession error:", e);
+        console.error("[order-toplevel] error:", e);
+      }
+    }
+
+    // Fallback final: busca QUALQUER order_session ativa e checa se o LID bate
+    // com algum business_phone salvo (para casos onde a resolução acima falhou)
+    if (remoteJid.endsWith("@lid") && phoneCandidates.size <= 1) {
+      try {
+        const now = new Date().toISOString();
+        const { data: activeSessions } = await supabase
+          .from("order_sessions")
+          .select("id, business_phone, user_phone, business_name, order_summary, payment_preference")
+          .eq("status", "active")
+          .gt("expires_at", now)
+          .limit(10);
+        if (activeSessions?.length) {
+          // Tenta resolver o LID pra cada business_phone ativo
+          for (const sess of activeSessions) {
+            const bp = (sess.business_phone as string).replace(/\D/g, "");
+            // Checa se esse business_phone está nos contacts com o LID que mandou
+            const { data: matchConv } = await supabase
+              .from("conversations")
+              .select("whatsapp_lid")
+              .eq("phone_number", bp)
+              .limit(1)
+              .maybeSingle();
+            const savedLid = (matchConv?.whatsapp_lid as string ?? "").replace(/@lid$/, "").replace(/:.*$/, "");
+            const incomingLid = senderRaw.replace(/:.*$/, "");
+            if (savedLid && savedLid === incomingLid) {
+              const orderHandled = await handleActiveOrderSession(bp, text.trim());
+              if (orderHandled) {
+                return new Response(JSON.stringify({ ok: true, order_session: true }), {
+                  headers: { "Content-Type": "application/json" },
+                });
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.error("[order-toplevel-fallback] error:", e);
       }
     }
   }
