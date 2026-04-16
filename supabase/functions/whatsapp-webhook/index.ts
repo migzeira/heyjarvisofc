@@ -3798,6 +3798,25 @@ serve(async (req) => {
     }
   }
 
+  // ── ORDER SESSION CHECK (top-level) — intercepta QUALQUER mensagem de estabelecimento ──
+  // Roda ANTES de tudo (shadow, processMessage, unknown_number) porque o estabelecimento
+  // NÃO é cliente Jarvis e seria descartado em "unknown_number" ou "isCrossJarvisReply".
+  if (text?.trim()) {
+    const senderDigits = remoteJid.replace(/@.*$/, "").replace(/[:\D]/g, "");
+    if (senderDigits.length >= 10) {
+      try {
+        const orderHandled = await handleActiveOrderSession(senderDigits, text.trim());
+        if (orderHandled) {
+          return new Response(JSON.stringify({ ok: true, order_session: true }), {
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+      } catch (e) {
+        console.error("[order-toplevel] handleActiveOrderSession error:", e);
+      }
+    }
+  }
+
   // ─── Modo Sombra: texto encaminhado ──────────────────────────────────────
   if (isForwarded && text.trim()) {
     // Se usuario encaminhou + digitou algo que classifyIntent reconhece → usa fluxo normal
