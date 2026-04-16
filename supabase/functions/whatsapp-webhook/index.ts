@@ -3541,7 +3541,18 @@ serve(async (req) => {
   const data = (Array.isArray(rawData) ? rawData[0] : rawData) as Record<string, unknown>;
   const key = data?.key as Record<string, unknown>;
 
+  // DEBUG TEMPORÁRIO: loga TUDO que chega
+  const _debugText = ((data?.message as Record<string, unknown>)?.conversation as string) ??
+    (((data?.message as Record<string, unknown>)?.extendedTextMessage as Record<string, unknown>)?.text as string) ?? "";
+  const _debugMsgType = data?.messageType ?? "unknown";
+  const _debugKeyJid = key?.remoteJid ?? "null";
+  const _debugFromMe = key?.fromMe ? "true" : "false";
+  await supabase.from("debug_logs").insert({
+    message: `[webhook-in] jid=${_debugKeyJid} fromMe=${_debugFromMe} type=${_debugMsgType} text="${_debugText.slice(0, 60)}"`,
+  } as any).then(undefined, () => {});
+
   if (key?.fromMe) {
+    await supabase.from("debug_logs").insert({ message: `[webhook-in] STOPPED fromMe=true` } as any).then(undefined, () => {});
     return new Response("OK");
   }
 
@@ -5723,8 +5734,7 @@ async function executeOrder(
   // 1. Limpa pending_action PRIMEIRO — evita re-execução se der timeout
   await supabase.from("whatsapp_sessions")
     .update({ pending_action: null, pending_context: null } as any)
-    .eq("user_id", userId)
-    .catch(() => {});
+    .eq("user_id", userId).then(undefined, () => {});
 
   // 2. Confirmação pro usuário — envia ANTES da pizzaria pra garantir que chega
   await sendText(userPhone,
@@ -5767,7 +5777,7 @@ async function executeOrder(
     recurrence_value: null,
     source:           "order_followup",
     status:           "pending",
-  } as any).catch(() => {});
+  } as any).then(undefined, () => {});
 
   return ""; // vazio — confirmação já enviada acima
 }
@@ -5835,7 +5845,7 @@ async function scheduleOrder(
     source:           "scheduled_order",
     status:           "pending",
     order_context:    orderContext,
-  } as any).catch(() => {});
+  } as any).then(undefined, () => {});
 
   // Formata horário pra exibir pro usuario
   const scheduledDate = new Date(scheduledAt);
@@ -7004,8 +7014,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
         if (isClose) {
           await supabase.from("order_sessions")
             .update({ status: "completed" } as any)
-            .eq("id", waitingSession.id)
-            .catch(() => {});
+            .eq("id", waitingSession.id).then(undefined, () => {});
           await sendText(
             sendPhone || replyTo,
             `✅ Pedido na *${businessName}* encerrado! Bom apetite! 🍕😋`
@@ -7029,8 +7038,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
           // Volta sessao pra "active" para continuar capturando respostas da pizzaria
           await supabase.from("order_sessions")
             .update({ status: "active" } as any)
-            .eq("id", waitingSession.id)
-            .catch(() => {});
+            .eq("id", waitingSession.id).then(undefined, () => {});
           // Confirma pro usuario
           await sendText(
             sendPhone || replyTo,
@@ -7058,8 +7066,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
         if (isClose) {
           await supabase.from("order_sessions")
             .update({ status: "completed" } as any)
-            .eq("id", activeSession.id)
-            .catch(() => {});
+            .eq("id", activeSession.id).then(undefined, () => {});
           await sendText(
             sendPhone || replyTo,
             `✅ Pedido na *${activeSession.business_name}* encerrado! Bom apetite! 🍕😋`
@@ -7126,13 +7133,21 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
     let pendingContext: unknown;
 
     // ── HIGH-PRIORITY: order_confirm com pending_action ativo ──
-    // Checa direto sem depender do intent override. Qualquer mensagem curta
-    // quando há um pedido esperando confirmação é tratada como resposta.
     if (session?.pending_action === "order_confirm" && text.trim().length < 100) {
       const ctx = (session?.pending_context ?? {}) as Record<string, unknown>;
       const msgLow = text.toLowerCase().trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+      // DEBUG: loga o texto exato e match pra diagnosticar
+      await supabase.from("debug_logs").insert({
+        message: `[order_confirm] text="${text}" msgLow="${msgLow}" len=${msgLow.length} codes=[${msgLow.split("").map(c => c.charCodeAt(0)).join(",")}]`,
+      } as any).then(undefined, () => {});
+
       const yes = /\b(sim|s|ok|okay|confirma(r|do)?|pode|claro|envia(r)?|manda(r)?|vai|yes|yep|bora|confirmo|positivo|aprovo|beleza|blz|isso|perfeito|certo|pode ser)\b/i.test(msgLow);
       const no  = /\b(nao|n|cancela(r)?|deixa|esquece|nope|cancelar|negativo|desisto|deixa pra la)\b/i.test(msgLow);
+
+      await supabase.from("debug_logs").insert({
+        message: `[order_confirm] yes=${yes} no=${no} hasBiz=${!!ctx.business_name}`,
+      } as any).then(undefined, () => {});
 
       if (yes && ctx.business_name) {
         if (ctx.scheduled_at) {
