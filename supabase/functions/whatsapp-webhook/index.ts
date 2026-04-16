@@ -5182,14 +5182,30 @@ async function handleOrderOnBehalf(
       return {
         response:
           `Encontrei mais de um estabelecimento desse tipo:\n\n${lista}\n\n` +
-          `Qual deles? Me diz o nome completo.`,
+          `Qual deles? Me diz o nome.`,
+        pendingAction: "order_disambiguate",
+        pendingContext: {
+          original_text: text,
+          candidates: matchedByCategory.map((b: any) => ({ name: b.name, phone: b.phone })),
+          agent_name: agentName,
+          sender_name: userNickname || pushName || "seu usuário",
+          user_phone: userPhone,
+        },
       };
     } else {
       const lista = businesses.map((b: any) => `• ${b.name}`).join("\n");
       return {
         response:
           `Não identifiquei o estabelecimento no seu pedido. Seus estabelecimentos salvos:\n\n${lista}\n\n` +
-          `Tente ser mais específico, ex: _"Jarvis, pede uma pizza de calabresa na ${businesses[0]?.name}"_`,
+          `Qual deles? Me diz o nome.`,
+        pendingAction: "order_disambiguate",
+        pendingContext: {
+          original_text: text,
+          candidates: businesses.map((b: any) => ({ name: b.name, phone: b.phone })),
+          agent_name: agentName,
+          sender_name: userNickname || pushName || "seu usuário",
+          user_phone: userPhone,
+        },
       };
     }
   }
@@ -5200,7 +5216,15 @@ async function handleOrderOnBehalf(
     return {
       response:
         `Não identifiquei o estabelecimento. Seus estabelecimentos salvos:\n\n${lista}\n\n` +
-        `Diga o nome completo do lugar.`,
+        `Qual deles? Me diz o nome.`,
+      pendingAction: "order_disambiguate",
+      pendingContext: {
+        original_text: text,
+        candidates: businesses.map((b: any) => ({ name: b.name, phone: b.phone })),
+        agent_name: agentName,
+        sender_name: userNickname || pushName || "seu usuário",
+        user_phone: userPhone,
+      },
     };
   }
 
@@ -5279,6 +5303,101 @@ async function handleOrderOnBehalf(
     response: `Anotado: *${rawOrder}* na *${matched.name}*! 🍕\n\nVai querer bebida ou algum extra junto? (refrigerante, suco, sobremesa...)\n\nSe não, responda *não*.`,
     pendingAction: "order_collecting",
     pendingContext: { ...baseCtxFull, step: "drinks" },
+  };
+}
+
+/**
+ * Resolve desambiguação quando o usuário escolhe entre vários estabelecimentos.
+ * Recebe a resposta do usuário (ex: "Maya") e busca qual candidato bate.
+ * Se encontrou → inicia o fluxo de pedido (step: what).
+ * Se não encontrou → repete a pergunta.
+ */
+async function handleOrderDisambiguate(
+  userId: string,
+  userPhone: string,
+  text: string,
+  ctx: Record<string, unknown>,
+): Promise<{ response: string; pendingAction?: string; pendingContext?: unknown }> {
+  const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const candidates = ctx.candidates as Array<{ name: string; phone: string }>;
+  const inputNorm = norm(text);
+
+  // Cancelamento
+  if (/^(cancela(r)?|esquece|deixa|não quero|desiste)\b/i.test(text.trim())) {
+    return { response: `Ok, pedido cancelado! 👍`, pendingAction: undefined, pendingContext: undefined };
+  }
+
+  // Busca o candidato que melhor bate com a resposta do usuario
+  let chosen: { name: string; phone: string } | null = null;
+  let bestScore = 0;
+  for (const c of candidates) {
+    const cNorm = norm(c.name);
+    // Match exato do nome
+    if (inputNorm === cNorm) { chosen = c; break; }
+    // Palavras do input que batem no nome do candidato
+    const inputWords = inputNorm.split(/\s+/).filter(w => w.length > 1);
+    let score = 0;
+    for (const w of inputWords) {
+      if (cNorm.includes(w)) score += 10;
+    }
+    if (score > bestScore) { bestScore = score; chosen = c; }
+  }
+
+  if (!chosen || bestScore === 0) {
+    const lista = candidates.map(c => `• ${c.name}`).join("\n");
+    return {
+      response: `Não entendi. Qual desses?\n\n${lista}`,
+      pendingAction: "order_disambiguate",
+      pendingContext: ctx,
+    };
+  }
+
+  // Busca dados de entrega do perfil
+  const { data: profileData } = await supabase
+    .from("profiles")
+    .select("delivery_street, delivery_number, delivery_complement, delivery_neighborhood, delivery_city, delivery_reference, payment_preference, cpf_orders, display_name")
+    .eq("id", userId)
+    .maybeSingle();
+
+  const senderName = (ctx.sender_name as string) || profileData?.display_name || "seu usuário";
+  const agentName  = (ctx.agent_name  as string) || "Jarvis";
+  const street     = profileData?.delivery_street ?? "";
+  const number     = profileData?.delivery_number ?? "";
+  const complement = profileData?.delivery_complement ?? "";
+  const neighborhood = profileData?.delivery_neighborhood ?? "";
+  const city       = profileData?.delivery_city ?? "";
+  const reference  = profileData?.delivery_reference ?? "";
+  const payment    = profileData?.payment_preference ?? "débito";
+
+  const hasAddress = street && number;
+  const addressLine = hasAddress
+    ? `${street}, ${number}${complement ? `, ${complement}` : ""}${neighborhood ? ` — ${neighborhood}` : ""}${city ? `, ${city}` : ""}${reference ? ` (${reference})` : ""}`
+    : null;
+
+  if (!hasAddress) {
+    return {
+      response:
+        `Antes de pedir na *${chosen.name}*, cadastre seu endereço em *Meu Perfil → Dados de Entrega*. 📍\n\nDepois é só repetir o pedido!`,
+    };
+  }
+
+  // Inicia coleta do pedido (step: what)
+  return {
+    response: `Boa! O que você quer pedir na *${chosen.name}*? 🍽️\n\nMe conta os itens com sabores, quantidades e qualquer detalhe.`,
+    pendingAction: "order_collecting",
+    pendingContext: {
+      business_name:      chosen.name,
+      business_phone:     chosen.phone.replace(/\D/g, ""),
+      delivery_address:   addressLine,
+      payment_preference: payment,
+      sender_name:        senderName,
+      agent_name:         agentName,
+      user_phone:         userPhone,
+      step:               "what",
+      order_content:      "",
+      drinks:             "",
+      obs:                "",
+    },
   };
 }
 
@@ -6885,6 +7004,14 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
         }, { onConflict: "phone_number" });
         responseText = ""; // botão já enviado
       }
+
+    } else if (session?.pending_action === "order_disambiguate") {
+      // Usuário respondeu qual estabelecimento quer (desambiguação)
+      const ctx = (session?.pending_context ?? {}) as Record<string, unknown>;
+      const result = await handleOrderDisambiguate(profile.id, sendPhone || replyTo, text, ctx);
+      responseText   = result.response;
+      pendingAction  = result.pendingAction;
+      pendingContext = result.pendingContext;
 
     } else if (session?.pending_action === "order_collecting") {
       // Usuário está no fluxo de coleta de detalhes do pedido (what → drinks → obs → confirm)
