@@ -259,7 +259,25 @@ serve(async (_req) => {
           { onConflict: "phone_number" }
         );
       } else {
-        await sendText(reminder.whatsapp_number, finalMessage);
+        // Envia mensagem principal. Se falhar, loga mas NÃO marca o reminder como failed
+        // (o usuário já recebeu/vai receber — não queremos perder a lógica pós-envio).
+        let mainSendOk = true;
+        try {
+          await sendText(reminder.whatsapp_number, finalMessage);
+        } catch (sendErr) {
+          console.error(`[send-reminder] main sendText failed for ${reminder.id}:`, sendErr);
+          mainSendOk = false;
+        }
+        // Se o envio principal falhou E é scheduled_order, avisa o usuário
+        if (!mainSendOk && reminder.source === "scheduled_order" && reminder.user_id) {
+          const oc = (reminder as any).order_context as Record<string, unknown> | null;
+          if (oc?.user_phone && oc?.business_name) {
+            await sendText(
+              oc.user_phone as string,
+              `⚠️ Não consegui entregar seu pedido agendado para *${oc.business_name}*. Tente fazer o pedido novamente.`
+            ).catch((e) => console.error("[send-reminder] failure notify:", e));
+          }
+        }
 
         // Se for send_to_contact, cria relay_request para que a resposta
         // do contato seja repassada automaticamente ao usuario via Jarvis
