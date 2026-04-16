@@ -5070,6 +5070,20 @@ function isVagueOrder(orderContent: string): boolean {
 }
 
 /**
+ * Detecta se o texto do pedido já menciona bebidas.
+ */
+function hasDrinksInOrder(text: string): boolean {
+  return /\b(coca[- ]?cola|guarana|fanta|sprite|pepsi|refrigerante|suco|cerveja|agua|água|litro|lata|long neck|h2o|schweppes|dolly|itubaína|kuat|antarctic|brahma|skol|heineken|budweiser|vinho|energetico|monster|red bull|ice tea|chá|mate|limonada|milkshake|soda|tonica|tônica)\b/i.test(text);
+}
+
+/**
+ * Detecta se o texto do pedido já menciona observações especiais.
+ */
+function hasObsInOrder(text: string): boolean {
+  return /\b(borda recheada|borda de|sem cebola|sem tomate|sem alface|sem maionese|sem ketchup|sem mostarda|sem picles|extra queijo|bem passad[oa]|mal passad[oa]|ao ponto|ponto da carne|sem gelo|com gelo|troco para?|sem sal|pouco sal|sem pimenta|com pimenta|gluten|sem lactose|vegano|vegetariano|sem azeitona|dobro de|extra de)\b/i.test(text);
+}
+
+/**
  * Monta a mensagem de confirmação final antes de enviar ao estabelecimento.
  */
 function buildOrderConfirmMsg(
@@ -5345,24 +5359,47 @@ async function handleOrderOnBehalf(
     };
   }
 
-  // Pedido já tem detalhes → pula a etapa "what" e vai pra "drinks"
-  // (um atendente real sempre pergunta sobre bebidas e observações)
+  // Pedido já tem detalhes → analisa o que já foi mencionado e só pergunta o que falta
+  const alreadyHasDrinks = hasDrinksInOrder(rawOrder);
+  const alreadyHasObs    = hasObsInOrder(rawOrder);
+
   const baseCtxFull = {
     business_name:      matched.name,
     business_phone:     (matched.phone as string).replace(/\D/g, ""),
     order_content:      rawOrder,
-    drinks:             "",
-    obs:                "",
+    drinks:             alreadyHasDrinks ? "(já incluído no pedido)" : "",
+    obs:                alreadyHasObs    ? "(já incluído no pedido)" : "",
     delivery_address:   addressLine,
     payment_preference: payment,
     sender_name:        senderName,
     agent_name:         agentName,
     user_phone:         userPhone,
   };
+
+  // Já tem tudo → direto pra confirmação
+  if (alreadyHasDrinks && alreadyHasObs) {
+    const confirmMsg = buildOrderConfirmMsg(matched.name, rawOrder, "", "", addressLine!, payment);
+    return {
+      response: confirmMsg,
+      pendingAction: "order_confirm",
+      pendingContext: { ...baseCtxFull, drinks: "", obs: "" },
+    };
+  }
+
+  // Falta bebida → pergunta bebida
+  if (!alreadyHasDrinks) {
+    return {
+      response: `Anotado: *${rawOrder}* na *${matched.name}*! 🍕\n\nVai querer bebida ou algum extra junto? (refrigerante, suco, sobremesa...)\n\nSe não, responda *não*.`,
+      pendingAction: "order_collecting",
+      pendingContext: { ...baseCtxFull, step: "drinks" },
+    };
+  }
+
+  // Tem bebida mas falta obs → pergunta obs
   return {
-    response: `Anotado: *${rawOrder}* na *${matched.name}*! 🍕\n\nVai querer bebida ou algum extra junto? (refrigerante, suco, sobremesa...)\n\nSe não, responda *não*.`,
+    response: `Anotado: *${rawOrder}* na *${matched.name}*! 🍕\n\nTem alguma observação especial? (ex: borda recheada, sem cebola, ponto da carne...)\n\nSe não, responda *não*.`,
     pendingAction: "order_collecting",
-    pendingContext: { ...baseCtxFull, step: "drinks" },
+    pendingContext: { ...baseCtxFull, step: "obs" },
   };
 }
 
@@ -5491,9 +5528,34 @@ async function handleOrderCollecting(
 
   if (step === "what") {
     updatedCtx.order_content = text.trim();
-    updatedCtx.step = "drinks";
+    const gotDrinks = hasDrinksInOrder(text);
+    const gotObs    = hasObsInOrder(text);
+
+    if (gotDrinks) updatedCtx.drinks = "(já incluído no pedido)";
+    if (gotObs)    updatedCtx.obs    = "(já incluído no pedido)";
+
+    // Já tem tudo → direto pra confirmação
+    if (gotDrinks && gotObs) {
+      const confirmMsg = buildOrderConfirmMsg(businessName, text.trim(), "", "", addressLine, payment);
+      return {
+        response: confirmMsg,
+        pendingAction: "order_confirm",
+        pendingContext: { ...updatedCtx, step: undefined, drinks: "", obs: "" },
+      };
+    }
+    // Falta bebida → pergunta
+    if (!gotDrinks) {
+      updatedCtx.step = "drinks";
+      return {
+        response: `Anotado: *${text.trim()}* na *${businessName}*! 🍕\n\nVai querer bebida ou algum extra? (refrigerante, suco, sobremesa...)\n\nSe não, responda *não*.`,
+        pendingAction: "order_collecting",
+        pendingContext: updatedCtx,
+      };
+    }
+    // Tem bebida, falta obs → pergunta obs
+    updatedCtx.step = "obs";
     return {
-      response: `Anotado: *${text.trim()}* na *${businessName}*! 🍕\n\nVai querer bebida ou algum extra? (refrigerante, suco, sobremesa...)\n\nSe não, responda *não*.`,
+      response: `Anotado: *${text.trim()}* na *${businessName}*! 🍕\n\nTem alguma observação especial? (ex: borda recheada, sem cebola, ponto da carne...)\n\nSe não, responda *não*.`,
       pendingAction: "order_collecting",
       pendingContext: updatedCtx,
     };
