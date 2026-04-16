@@ -5384,68 +5384,65 @@ async function handleOrderOnBehalf(
     } catch (_) { /* falhou — envia imediatamente */ }
   }
 
-  // Extrai conteudo do pedido — remove o prefixo (verbo + nome do estabelecimento) e pega o resto
-  // Abordagem: remove tudo antes de "quero/pede/faz pedido" + nome do estabelecimento
-  const matchedNameNorm = matched.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-  const matchedNameWords = matchedNameNorm.split(/\s+/);
-  let rawOrder = text;
+  // ── Extração inteligente do pedido via IA ──
+  // Usa Claude pra extrair APENAS os itens do pedido, corrigir nome do estabelecimento,
+  // e detectar bebidas/extras/obs — tudo limpo, sem lixo de transcrição.
+  let rawOrder = "";
+  let explicitNoExtras = false;
+  let explicitNoObs = false;
+  let aiExtractedDrinks = false;
+  let aiExtractedObs = false;
 
-  // Remove prefixo: "jarvis faz um pedido na pizzaria maya" → foca no conteúdo
-  // Tenta encontrar o nome do estabelecimento no texto e pegar tudo DEPOIS (ou ANTES se veio invertido)
-  const textNormOrder = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-  // Encontra a posição do nome do estabelecimento no texto
-  let bizEndIdx = -1;
-  for (const w of matchedNameWords) {
-    if (w.length <= 3) continue;
-    const wIdx = textNormOrder.indexOf(w);
-    if (wIdx >= 0 && wIdx + w.length > bizEndIdx) {
-      bizEndIdx = wIdx + w.length;
-    }
-  }
+  try {
+    const extractionResult = await chat([
+      {
+        role: "system",
+        content: `Você extrai pedidos de mensagens de voz transcritas. O estabelecimento é "${matched.name}".
 
-  if (bizEndIdx > 0) {
-    // Pega tudo depois do nome do estabelecimento
-    const afterBiz = text.slice(bizEndIdx).replace(/^[\s,.:]+/, "").trim();
-    // Também pega tudo antes do verbo de pedido (caso o conteúdo veio antes do nome)
-    const beforeVerb = text.match(/^.*?(?:quero|pede|pedir|faz(?:er)?(?:\s+um)?\s+pedido)/i);
-    const contentAfterVerb = afterBiz
-      .replace(/^(quero|eu quero|pra mim|por favor|pede|pedir)\s*/i, "")
-      .trim();
+Retorne APENAS JSON válido:
+{
+  "items": "lista limpa dos itens (ex: '1 pizza de calabresa com requeijão, 1 Coca-Cola 2 litros')",
+  "has_drinks": true/false,
+  "has_obs": true/false,
+  "no_extras": true/false
+}
 
-    if (contentAfterVerb.length > 5) {
-      rawOrder = contentAfterVerb;
-    } else {
-      // O conteúdo está antes do "na pizzaria X" — ex: "quero 1 pizza de calabresa na pizzaria maya"
-      const contentBeforeBiz = text.slice(0, Math.max(0, bizEndIdx - matchedNameNorm.length - 5))
-        .replace(/^.*?(quero|pede|pedir|faz(?:er)?(?:\s+um)?\s+pedido)\s*/i, "")
-        .replace(/\s*(n[ao]|na|pra|para|por favor)\s*$/i, "")
-        .trim();
-      if (contentBeforeBiz.length > 5) {
-        rawOrder = contentBeforeBiz;
-      }
-    }
-  } else {
-    // Fallback: remove verbo de pedido e tenta pegar o resto
+Regras ESTRITAS:
+- "items": APENAS os itens do pedido. Remova: nome do estabelecimento, "Jarvis", saudações, "tá bom?", "por favor", "pra mim", horários, instruções de envio.
+- Use "${matched.name}" como nome correto (ignore erros de transcrição como "Maia" por "Maya").
+- "has_drinks": true se mencionou qualquer bebida.
+- "has_obs": true se mencionou observação (borda recheada, sem cebola, bem passado etc.)
+- "no_extras": true se disse que NÃO quer extras/nada mais/só isso/sem borda/sem nada adicional.
+
+JSON puro, sem markdown.`,
+      },
+      { role: "user", content: text },
+    ]);
+    const parsed = JSON.parse(extractionResult ?? "{}");
+    if (parsed.items && parsed.items.length > 3) rawOrder = parsed.items;
+    if (parsed.has_drinks) aiExtractedDrinks = true;
+    if (parsed.has_obs) aiExtractedObs = true;
+    if (parsed.no_extras) { explicitNoExtras = true; explicitNoObs = true; }
+  } catch { /* fallback abaixo */ }
+
+  // Fallback: extração simples se IA falhou
+  if (!rawOrder) {
     rawOrder = text
       .replace(/^.*?(quero|pede|pedir|faz(?:er)?(?:\s+um)?\s+pedido)\s*/i, "")
       .replace(/\s*(n[ao]|na|pra|para)\s+.*(pizzaria|restaurante|farmacia|mercado|lanchonete)\s+\S+.*$/i, "")
+      .replace(/^(um pedido de|um pedido|pedido de|pedido)\s*/i, "")
+      .replace(/^(quero|eu quero|pra mim|por favor)\s*/i, "")
+      .replace(/\s*(por favor|pra mim|ta bom|tá bom|ok)\s*[\?\.]?\s*$/i, "")
       .trim();
+    // Detecção por regex como fallback
+    const textLowFull = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    if (!explicitNoExtras) {
+      explicitNoExtras = /\b(nao quero|sem|nenhum)\s*(itens?\s*)?extras?/i.test(textLowFull) ||
+        /\b(nao quero|sem)\s*(nada\s*)?(a\s*)?mais\b/i.test(textLowFull) ||
+        /\b(so\s*isso|e\s*so)\b/i.test(textLowFull);
+    }
+    if (!explicitNoObs) explicitNoObs = explicitNoExtras;
   }
-
-  // Limpa prefixos residuais
-  rawOrder = rawOrder
-    .replace(/^(um pedido de|um pedido|pedido de|pedido)\s*/i, "")
-    .replace(/^(quero|eu quero|pra mim|por favor)\s*/i, "")
-    .replace(/\s*(por favor|pra mim)\s*$/i, "")
-    .trim();
-
-  // Detecta negação explícita de extras/obs no texto original
-  const textLowFull = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-  const explicitNoExtras = /\b(nao quero|sem|nenhum)\s*(itens?\s*)?extras?/i.test(textLowFull) ||
-    /\b(nao quero|sem)\s*(nada\s*)?(a\s*)?mais\b/i.test(textLowFull) ||
-    /\b(so\s*isso|e\s*so)\b/i.test(textLowFull);
-  const explicitNoObs = /\b(nao quero|sem)\s*(nenhuma?\s*)?(observa[çc][aã]o|obs)\b/i.test(textLowFull) ||
-    explicitNoExtras; // "não quero nada mais" cobre obs também
 
   // Se o pedido é vago → inicia coleta de detalhes (step: what)
   if (isVagueOrder(rawOrder)) {
@@ -5467,8 +5464,8 @@ async function handleOrderOnBehalf(
   }
 
   // Pedido já tem detalhes → analisa o que já foi mencionado e só pergunta o que falta
-  const alreadyHasDrinks = hasDrinksInOrder(rawOrder) || hasDrinksInOrder(text);
-  const alreadyHasObs    = hasObsInOrder(rawOrder)    || hasObsInOrder(text);
+  const alreadyHasDrinks = aiExtractedDrinks || hasDrinksInOrder(rawOrder) || hasDrinksInOrder(text);
+  const alreadyHasObs    = aiExtractedObs    || hasObsInOrder(rawOrder)    || hasObsInOrder(text);
 
   const baseCtxFull = {
     business_name:      matched.name,
