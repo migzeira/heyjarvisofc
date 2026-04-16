@@ -5076,21 +5076,38 @@ function buildOrderConfirmMsg(
   obs: string,
   addressLine: string,
   payment: string,
+  scheduledAt?: string | null,
 ): string {
   const isEmptyDrinks = !drinks || /^(nao|não|n|nope|no|sem|nada|\(já incluído no pedido\))$/i.test(drinks.trim());
   const isEmptyObs    = !obs    || /^(nao|não|n|nope|no|sem|nada|nenhum[a]?|\(já incluído no pedido\))$/i.test(obs.trim());
   const drinksLine = isEmptyDrinks ? "" : `🥤 *Bebidas/extras:* ${drinks}\n`;
   const obsLine    = isEmptyObs    ? "" : `📌 *Observações:* ${obs}\n`;
 
+  // Cabeçalho muda se for agendado
+  let header: string;
+  let footer: string;
+  if (scheduledAt) {
+    const d = new Date(scheduledAt);
+    const timeStr = d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", timeZone: "America/Sao_Paulo" });
+    const nowBrt = new Date().toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" });
+    const dateStr = d.toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" });
+    const dayLabel = dateStr === nowBrt ? "hoje" : dateStr;
+    header = `⏰ *Vou agendar seu pedido para ${dayLabel} às ${timeStr}*\n\n`;
+    footer = `Responda *sim* para agendar ou *não* para cancelar.`;
+  } else {
+    header = `🛵 Confirma o pedido?\n\n`;
+    footer = `Responda *sim* para eu enviar ou *não* para cancelar.`;
+  }
+
   return (
-    `🛵 Confirma o pedido?\n\n` +
+    header +
     `🏪 *${businessName}*\n` +
     `📝 *Pedido:* ${orderContent}\n` +
     `${drinksLine}` +
     `${obsLine}` +
     `📍 *Entrega:* ${addressLine}\n` +
     `💳 *Pagamento:* ${payment}\n\n` +
-    `Responda *sim* para eu enviar ou *não* para cancelar.`
+    footer
   );
 }
 
@@ -5461,7 +5478,7 @@ no_extras: true se disse que NÃO quer extras/nada mais/só isso`;
 
   // Já tem tudo (bebida + obs mencionados OU negados explicitamente) → direto pra confirmação
   if ((alreadyHasDrinks || explicitNoExtras) && (alreadyHasObs || explicitNoObs)) {
-    const confirmMsg = buildOrderConfirmMsg(matched.name, rawOrder, "", "", addressLine!, payment);
+    const confirmMsg = buildOrderConfirmMsg(matched.name, rawOrder, "", "", addressLine!, payment, scheduledAt);
     return {
       response: confirmMsg,
       pendingAction: "order_confirm",
@@ -5488,7 +5505,7 @@ no_extras: true se disse que NÃO quer extras/nada mais/só isso`;
   }
 
   // Fallback: direto pra confirmação
-  const confirmMsg = buildOrderConfirmMsg(matched.name, rawOrder, "", "", addressLine!, payment);
+  const confirmMsg = buildOrderConfirmMsg(matched.name, rawOrder, "", "", addressLine!, payment, scheduledAt);
   return {
     response: confirmMsg,
     pendingAction: "order_confirm",
@@ -5629,7 +5646,7 @@ async function handleOrderCollecting(
 
     // Já tem tudo → direto pra confirmação
     if (gotDrinks && gotObs) {
-      const confirmMsg = buildOrderConfirmMsg(businessName, text.trim(), "", "", addressLine, payment);
+      const confirmMsg = buildOrderConfirmMsg(businessName, text.trim(), "", "", addressLine, payment, ctx.scheduled_at as string | null);
       return {
         response: confirmMsg,
         pendingAction: "order_confirm",
@@ -5669,7 +5686,7 @@ async function handleOrderCollecting(
     const drinks       = updatedCtx.drinks as string;
     const obs          = text.trim();
 
-    const confirmMsg = buildOrderConfirmMsg(businessName, orderContent, drinks, obs, addressLine, payment);
+    const confirmMsg = buildOrderConfirmMsg(businessName, orderContent, drinks, obs, addressLine, payment, ctx.scheduled_at as string | null);
     return {
       response: confirmMsg,
       pendingAction: "order_confirm",
@@ -7061,6 +7078,20 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
             `✅ Pedido na *${activeSession.business_name}* encerrado! Bom apetite! 🍕😋`
           ).catch(() => {});
           log.push("order_session_closed_by_user");
+          return log;
+        }
+
+        // Mensagens conversacionais curtas (ok, obrigado, valeu) quando há pedido
+        // em andamento NÃO devem ir pro AI chat — respondemos direto e fluxo continua
+        const isSmallTalk =
+          msgLow.length < 40 &&
+          /^(ok|obrigad[oa]|valeu|blz|beleza|show|\uD83D\uDC4D|top|massa|legal|bacana|otimo|ótimo|perfeito|combinado|demais|maravilha|tranquilo|tranquil[ao]|bom|bom sabe|de boa|ok obrigad|ok valeu|tmj|de boas|maravilhoso)\s*[!.?\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}]*\s*$/iu.test(msgLow);
+        if (isSmallTalk) {
+          await sendText(
+            sendPhone || replyTo,
+            `😊 Aguardando resposta da *${activeSession.business_name}* pro seu pedido. Quando chegar, te aviso!`
+          ).catch(() => {});
+          log.push("order_smalltalk");
           return log;
         }
       }
