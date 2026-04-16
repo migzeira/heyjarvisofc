@@ -3643,30 +3643,31 @@ serve(async (req) => {
     (quotedMsg?.conversation as string) ??
     ((quotedMsg?.extendedTextMessage as Record<string, unknown>)?.text as string) ??
     "";
+  // ── ORDER SESSION CHECK (top-level) — intercepta QUALQUER mensagem de estabelecimento ──
+  // Roda ANTES de tudo (isCrossJarvisReply, shadow, processMessage, unknown_number)
+  // porque o estabelecimento NÃO é cliente Jarvis e seria descartado.
+  if (text?.trim()) {
+    const senderDigits = remoteJid.replace(/@.*$/, "").replace(/[:\D]/g, "");
+    if (senderDigits.length >= 10) {
+      try {
+        const orderHandled = await handleActiveOrderSession(senderDigits, text.trim());
+        if (orderHandled) {
+          return new Response(JSON.stringify({ ok: true, order_session: true }), {
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+      } catch (e) {
+        console.error("[order-toplevel] handleActiveOrderSession error:", e);
+      }
+    }
+  }
+
   const isCrossJarvisReply =
     quotedText.includes("heyjarvis.com.br") ||
     quotedText.includes("assistente virtual do") ||
     quotedText.includes("assistente virtual de");
 
   if (isCrossJarvisReply) {
-    // ANTES de tratar como cross-Jarvis, checa se é um estabelecimento com order_session ativa
-    // (ex: pizzaria respondendo ao pedido feito pelo Jarvis via reply/quote)
-    {
-      const replyDigits = remoteJid.replace(/@.*$/, "").replace(/[:\D]/g, "");
-      if (replyDigits.length >= 10) {
-        try {
-          const orderHandled = await handleActiveOrderSession(replyDigits, text?.trim() || "");
-          if (orderHandled) {
-            return new Response(JSON.stringify({ ok: true, order_reply: true }), {
-              headers: { "Content-Type": "application/json" },
-            });
-          }
-        } catch (e) {
-          console.error("[order] cross-jarvis reply order check error:", e);
-        }
-      }
-    }
-
     // Checa se o remetente é um usuário registrado do Hey Jarvis
     const { profile: senderProfile } = await resolveProfileForShadow(replyTo, lid);
     if (senderProfile) {
@@ -3795,25 +3796,6 @@ serve(async (req) => {
       return new Response(JSON.stringify({ ok: true, auto_contact: true, debug: debugResult }), {
         headers: { "Content-Type": "application/json" },
       });
-    }
-  }
-
-  // ── ORDER SESSION CHECK (top-level) — intercepta QUALQUER mensagem de estabelecimento ──
-  // Roda ANTES de tudo (shadow, processMessage, unknown_number) porque o estabelecimento
-  // NÃO é cliente Jarvis e seria descartado em "unknown_number" ou "isCrossJarvisReply".
-  if (text?.trim()) {
-    const senderDigits = remoteJid.replace(/@.*$/, "").replace(/[:\D]/g, "");
-    if (senderDigits.length >= 10) {
-      try {
-        const orderHandled = await handleActiveOrderSession(senderDigits, text.trim());
-        if (orderHandled) {
-          return new Response(JSON.stringify({ ok: true, order_session: true }), {
-            headers: { "Content-Type": "application/json" },
-          });
-        }
-      } catch (e) {
-        console.error("[order-toplevel] handleActiveOrderSession error:", e);
-      }
     }
   }
 
