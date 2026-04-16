@@ -5487,7 +5487,7 @@ async function handleOrderCollecting(
     updatedCtx.order_content = text.trim();
     updatedCtx.step = "drinks";
     return {
-      response: `Anotado! 🍕\n\nVai querer bebida ou algum extra? (refrigerante, suco, sobremesa...)\n\nSe não, responda *não*.`,
+      response: `Anotado: *${text.trim()}* na *${businessName}*! 🍕\n\nVai querer bebida ou algum extra? (refrigerante, suco, sobremesa...)\n\nSe não, responda *não*.`,
       pendingAction: "order_collecting",
       pendingContext: updatedCtx,
     };
