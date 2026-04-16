@@ -5799,11 +5799,14 @@ async function executeOrder(
     status:           "pending",
   } as any).catch(() => {});
 
-  // 4. Confirmação pro usuário
-  return (
+  // 4. Confirmação pro usuário — envia direto aqui pra garantir que chega
+  // (se depender do responseText, pode dar timeout antes de enviar)
+  const confirmMsg =
     `✅ Pedido enviado para *${businessName}*!\n\n` +
-    `Vou te avisar assim que eles responderem. Se falar algo que eu não souber responder, repasso pra você na hora. 🍕`
-  );
+    `Vou te avisar assim que eles responderem. Se falar algo que eu não souber responder, repasso pra você na hora. 🍕`;
+  await sendText(userPhone, confirmMsg).catch(() => {});
+
+  return ""; // vazio pra não duplicar mensagem
 }
 
 /**
