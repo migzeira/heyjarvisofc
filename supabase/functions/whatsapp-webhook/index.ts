@@ -5395,10 +5395,7 @@ async function handleOrderOnBehalf(
   let aiExtractedObs = false;
 
   try {
-    const extractionResult = await chat([
-      {
-        role: "system",
-        content: `Você extrai pedidos de delivery de mensagens de voz transcritas.
+    const orderSystemPrompt = `Você extrai pedidos de delivery de mensagens de voz transcritas.
 O estabelecimento é "${matched.name}".
 
 Retorne APENAS um JSON (sem markdown, sem crases, sem explicação):
@@ -5408,14 +5405,17 @@ Campo "items": APENAS os itens do pedido, limpos e formatados.
 Exemplos de entrada → saída:
 - "Jarvis quero fazer um pedido na pizzaria Maia quero uma pizza de calabresa com requeijão e uma Coca-Cola 2 litros eu não quero borda recheada nem algo a mais" → "1 pizza de calabresa com requeijão, 1 Coca-Cola 2 litros"
 - "pede pra mim uma pizza de 4 queijos e uma de frango com borda de catupiry" → "1 pizza de 4 queijos, 1 pizza de frango, borda de catupiry"
+- "Jarvis fazer um pedido na Maia eu quero uma pizza de calabresa com queijo borda recheada de catupiry e uma Coca-Cola Zero 2 litros por favor" → "1 pizza de calabresa com queijo, borda recheada de catupiry, 1 Coca-Cola Zero 2 litros"
 
-REMOVA do items: nome do assistente, nome do estabelecimento, "pra mim", "por favor", "tá bom", horários, saudações.
+REMOVA do items: nome do assistente (Jarvis), nome do estabelecimento, "fazer um pedido", "pra mim", "por favor", "tá bom", "está bom", horários, saudações, qualquer frase que não seja item do pedido.
 has_drinks: true se mencionou bebida (coca, suco, cerveja, água, etc.)
 has_obs: true se mencionou observação (borda recheada, sem cebola, etc.)
-no_extras: true se disse que NÃO quer extras/nada mais/só isso`,
-      },
-      { role: "user", content: text },
-    ]);
+no_extras: true se disse que NÃO quer extras/nada mais/só isso`;
+
+    const extractionResult = await chat(
+      [{ role: "user", content: text }],
+      orderSystemPrompt
+    );
 
     // Parse robusto — remove markdown/crases se a IA incluiu
     const cleanJson = (extractionResult ?? "")
