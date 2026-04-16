@@ -7051,14 +7051,15 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
           return log;
         }
 
-        // Verifica se a mensagem é um NOVO comando/intent (não é resposta pra pizzaria)
-        // Se for um novo pedido, lembrete, agenda, etc → deixa passar pro fluxo normal
+        // Verifica se a mensagem deve ser repassada à pizzaria ou se é outro fluxo:
+        // 1. Novo comando (pedido, lembrete, agenda) → deixa passar pro classify
+        // 2. Tem pending_action na sessão (order_confirm, etc) → a msg é pro fluxo pendente, não relay
         const relayIntent = classifyIntent(text);
         const isNewCommand = relayIntent !== "ai_chat" && relayIntent !== "greeting";
-        if (isNewCommand) {
-          // Não é resposta pra pizzaria — é um novo comando. Deixa passar pro classify normal.
-          // (a sessão continua waiting_user pra quando o usuário realmente responder)
-          log.push("order_relay_skipped_new_intent");
+        const hasPendingFlow = session?.pending_action && session.pending_action !== "order_waiting_user";
+        if (isNewCommand || hasPendingFlow) {
+          // Não é resposta pra pizzaria — deixa passar pro fluxo normal
+          log.push("order_relay_skipped");
         } else {
           // Repassa resposta do usuario pro estabelecimento
           await sendText(businessPhone, text).catch(() => {});
