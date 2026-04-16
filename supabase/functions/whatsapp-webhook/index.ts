@@ -7125,6 +7125,54 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
     let pendingAction: string | undefined;
     let pendingContext: unknown;
 
+    // ── HIGH-PRIORITY: order_confirm com pending_action ativo ──
+    // Checa direto sem depender do intent override. Qualquer mensagem curta
+    // quando há um pedido esperando confirmação é tratada como resposta.
+    if (session?.pending_action === "order_confirm" && text.trim().length < 100) {
+      const ctx = (session?.pending_context ?? {}) as Record<string, unknown>;
+      const msgLow = text.toLowerCase().trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      const yes = /\b(sim|s|ok|okay|confirma(r|do)?|pode|claro|envia(r)?|manda(r)?|vai|yes|yep|bora|confirmo|positivo|aprovo|beleza|blz|isso|perfeito|certo|pode ser)\b/i.test(msgLow);
+      const no  = /\b(nao|n|cancela(r)?|deixa|esquece|nope|cancelar|negativo|desisto|deixa pra la)\b/i.test(msgLow);
+
+      if (yes && ctx.business_name) {
+        if (ctx.scheduled_at) {
+          responseText = await scheduleOrder(profile.id, sendPhone || replyTo, ctx);
+        } else {
+          responseText = await executeOrder(profile.id, sendPhone || replyTo, ctx);
+        }
+        pendingAction  = undefined;
+        pendingContext = undefined;
+      } else if (no) {
+        responseText  = "Ok, pedido cancelado! Pode pedir de novo quando quiser. 👍";
+        pendingAction  = undefined;
+        pendingContext = undefined;
+      } else {
+        // Mensagem ambígua — preserva e pede clarificação
+        responseText   = "Responda *sim* para confirmar o pedido ou *não* para cancelar.";
+        pendingAction  = "order_confirm";
+        pendingContext = ctx;
+      }
+
+      // Upsert da sessão imediatamente (não depende do fluxo final)
+      await supabase.from("whatsapp_sessions").upsert({
+        user_id: profile.id,
+        phone_number: sessionId,
+        pending_action: pendingAction ?? null,
+        pending_context: pendingContext ?? null,
+        last_activity: new Date().toISOString(),
+        last_processed_id: messageId ?? null,
+      }, { onConflict: "phone_number" });
+
+      // Envia responseText se não vazio (executeOrder envia sozinho → retorna "")
+      if (responseText) {
+        await sendText(sendPhone || replyTo, responseText).catch((err) =>
+          console.error("[order_confirm top-level] sendText failed:", err)
+        );
+      }
+      log.push("order_confirm_handled_early");
+      return log;
+    }
+
     if (intent === "greeting") {
       // Saudação: usa greeting_message personalizado do usuário ou fallback padrão
       const rawTplGreeting = (config?.greeting_message as string)
