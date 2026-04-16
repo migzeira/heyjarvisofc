@@ -288,6 +288,57 @@ serve(async (_req) => {
             }
           } catch (_relayErr) { /* nao quebra o fluxo de envio */ }
         }
+
+        // ─── Pedido agendado: dispara pedido ao estabelecimento ───
+        if (reminder.source === "scheduled_order" && reminder.user_id) {
+          try {
+            const ctx = (reminder as any).order_context as Record<string, unknown> | null;
+            if (ctx) {
+              const bizPhone   = ctx.business_phone as string;
+              const bizName    = ctx.business_name  as string;
+              const userPhone  = ctx.user_phone     as string;
+              const userId     = ctx.user_id        as string;
+              const senderName = (ctx.sender_name as string) || "seu usuário";
+
+              // 1. Cria order_session de 3h
+              const expiresAt = new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString();
+              await supabase.from("order_sessions").insert({
+                user_id:            userId,
+                user_phone:         userPhone,
+                business_phone:     bizPhone,
+                business_name:      bizName,
+                order_summary:      ctx.order_summary,
+                delivery_address:   ctx.delivery_address,
+                payment_preference: ctx.payment_preference,
+                status:             "active",
+                expires_at:         expiresAt,
+              } as any).catch(() => {});
+
+              // 2. Cria follow-up de 1h30
+              const followupAt = new Date(Date.now() + 90 * 60 * 1000).toISOString();
+              const firstName = senderName.split(" ")[0] || "você";
+              await supabase.from("reminders").insert({
+                user_id:          userId,
+                whatsapp_number:  userPhone,
+                title:            `Follow-up pedido ${bizName}`,
+                message:          `Oi ${firstName}! 🍕 Seu pedido na *${bizName}* já chegou?\n\nSe sim, me avisa (ex: _"já chegou"_, _"recebi o pedido"_) que eu encerro o atendimento com eles!`,
+                send_at:          followupAt,
+                recurrence:       "none",
+                recurrence_value: null,
+                source:           "order_followup",
+                status:           "pending",
+              } as any).catch(() => {});
+
+              // 3. Notifica o usuario que o pedido foi enviado
+              await sendText(
+                userPhone,
+                `✅ Seu pedido agendado na *${bizName}* acabou de ser enviado! 🍕\n\nVou te avisar assim que eles responderem.`
+              ).catch(() => {});
+            }
+          } catch (_orderErr) {
+            console.error("[send-reminder] scheduled_order error:", _orderErr);
+          }
+        }
       }
 
       // Marca como enviado

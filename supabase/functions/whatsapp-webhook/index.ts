@@ -5198,6 +5198,7 @@ async function handleOrderOnBehalf(
   agentName: string,
   userNickname: string | null,
   pushName: string,
+  userTz: string = "America/Sao_Paulo",
 ): Promise<{ response: string; pendingAction?: string; pendingContext?: unknown }> {
   // Busca todos os contatos do tipo business do usuario
   const { data: businesses } = await supabase
@@ -5354,6 +5355,35 @@ async function handleOrderOnBehalf(
     };
   }
 
+  // ── Detecção de horário agendado ("hoje 18h", "daqui 2h", "amanhã às 12h") ──
+  const normForTime = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  let scheduledAt: string | null = null;
+
+  // Relativo: "daqui X minutos/horas"
+  const delayMatch = normForTime.match(/daqui\s+(\d+)\s*(minuto|hora)/i);
+  if (delayMatch) {
+    const num = parseInt(delayMatch[1]);
+    const unit = delayMatch[2].toLowerCase();
+    const delayMs = unit.startsWith("min") ? num * 60_000 : num * 3_600_000;
+    scheduledAt = new Date(Date.now() + delayMs).toISOString();
+  }
+
+  // Absoluto: "às 17h", "hoje 18h", "amanhã às 9h"
+  if (!scheduledAt && /\b(hoje|amanha|[àa]s?\s+\d{1,2}[h:]\d*)\b/i.test(normForTime)) {
+    try {
+      const tzOff = getTzOffset(userTz);
+      const nowIso = new Date().toLocaleString("sv-SE", { timeZone: userTz }).replace(" ", "T") + tzOff;
+      const parsedTime = await parseReminderIntent(text, nowIso);
+      if (parsedTime?.remind_at) {
+        const parsedDate = new Date(parsedTime.remind_at);
+        // Só agenda se for no futuro (>5min)
+        if (parsedDate.getTime() > Date.now() + 5 * 60_000) {
+          scheduledAt = parsedDate.toISOString();
+        }
+      }
+    } catch (_) { /* falhou — envia imediatamente */ }
+  }
+
   // Extrai conteudo do pedido da mensagem do usuario
   const orderMatch = text.match(
     /(?:pede?|fa[zç]|encomienda?|comanda?r?)\s+(?:um[a]?\s+)?(.+?)(?:\s+n[ao]\s+\w|\s+pra\s+\w|$)/i
@@ -5372,6 +5402,7 @@ async function handleOrderOnBehalf(
       sender_name:        senderName,
       agent_name:         agentName,
       user_phone:         userPhone,
+      scheduled_at:       scheduledAt,
     };
     return {
       response: `Claro! O que você quer pedir na *${matched.name}*? 🍽️\n\nMe conta os itens com sabores, quantidades e qualquer detalhe.`,
@@ -5395,6 +5426,7 @@ async function handleOrderOnBehalf(
     sender_name:        senderName,
     agent_name:         agentName,
     user_phone:         userPhone,
+    scheduled_at:       scheduledAt,
   };
 
   // Já tem tudo → direto pra confirmação
@@ -5682,6 +5714,87 @@ async function executeOrder(
   return (
     `✅ Pedido enviado para *${businessName}*!\n\n` +
     `Vou te avisar assim que eles responderem. Se falar algo que eu não souber responder, repasso pra você na hora. 🍕`
+  );
+}
+
+/**
+ * Agenda o pedido pra um horário futuro via sistema de reminders.
+ * Pré-monta a mensagem pro estabelecimento e salva o contexto completo.
+ * O send-reminder dispara no horário: envia a msg, cria order_session e follow-up.
+ */
+async function scheduleOrder(
+  userId: string,
+  userPhone: string,
+  ctx: Record<string, unknown>,
+): Promise<string> {
+  const businessName    = ctx.business_name    as string;
+  const businessPhone   = ctx.business_phone   as string;
+  const orderContent    = ctx.order_content    as string;
+  const deliveryAddress = ctx.delivery_address as string;
+  const payment         = ctx.payment_preference as string;
+  const senderName      = ctx.sender_name      as string;
+  const agentName       = (ctx.agent_name as string) || "Jarvis";
+  const scheduledAt     = ctx.scheduled_at     as string;
+
+  const drinks = (ctx.drinks as string) ?? "";
+  const obs    = (ctx.obs    as string) ?? "";
+
+  const drinksHaValue = drinks && !/^(nao|não|n|nope|no|sem|nada|\(já incluído no pedido\))$/i.test(drinks.trim());
+  const obsHasValue   = obs    && !/^(nao|não|n|nope|no|sem|nada|nenhum[a]?|\(já incluído no pedido\))$/i.test(obs.trim());
+
+  // Pré-monta a mensagem que será enviada ao estabelecimento no horário
+  const outgoingMsg =
+    `Olá! Meu nome é *${agentName}*, assistente virtual do *${senderName}*.\n\n` +
+    `Gostaria de fazer um pedido:\n\n` +
+    `📝 *Pedido:* ${orderContent}\n` +
+    (drinksHaValue ? `🥤 *Extras/Bebidas:* ${drinks}\n` : "") +
+    (obsHasValue   ? `📌 *Observações:* ${obs}\n`        : "") +
+    `📍 *Endereço de entrega:* ${deliveryAddress}\n` +
+    `💳 *Pagamento:* ${payment}\n\n` +
+    `Pode confirmar o recebimento, o valor total e o tempo estimado de entrega?\n\n` +
+    `——————————————\n` +
+    `Para falar diretamente com *${senderName}*, o número é: *${userPhone}*`;
+
+  // Salva o contexto completo pra send-reminder criar order_session + follow-up
+  const orderContext = {
+    user_id:            userId,
+    user_phone:         userPhone,
+    business_phone:     businessPhone,
+    business_name:      businessName,
+    order_summary:      orderContent,
+    delivery_address:   deliveryAddress,
+    payment_preference: payment,
+    sender_name:        senderName,
+    agent_name:         agentName,
+  };
+
+  // Cria reminder agendado
+  await supabase.from("reminders").insert({
+    user_id:          userId,
+    whatsapp_number:  businessPhone,
+    title:            `Pedido agendado: ${businessName}`,
+    message:          outgoingMsg,
+    send_at:          scheduledAt,
+    recurrence:       "none",
+    recurrence_value: null,
+    source:           "scheduled_order",
+    status:           "pending",
+    order_context:    orderContext,
+  } as any).catch(() => {});
+
+  // Formata horário pra exibir pro usuario
+  const scheduledDate = new Date(scheduledAt);
+  const timeStr = scheduledDate.toLocaleTimeString("pt-BR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "America/Sao_Paulo",
+  });
+
+  return (
+    `⏰ Pedido agendado para *${timeStr}*!\n\n` +
+    `🏪 *${businessName}*\n` +
+    `📝 *Pedido:* ${orderContent}\n\n` +
+    `Vou enviar automaticamente no horário. Depois te aviso quando eles responderem! 🍕`
   );
 }
 
@@ -7293,7 +7406,12 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       const no  = /^(2|nao|n|cancela|deixa|esquece|não|nope|cancelar)\b/i.test(msgLow);
 
       if (yes && ctx.business_name) {
-        responseText  = await executeOrder(profile.id, sendPhone || replyTo, ctx);
+        // Se tem scheduled_at → agenda pro futuro; senão → envia agora
+        if (ctx.scheduled_at) {
+          responseText = await scheduleOrder(profile.id, sendPhone || replyTo, ctx);
+        } else {
+          responseText = await executeOrder(profile.id, sendPhone || replyTo, ctx);
+        }
         pendingAction  = undefined;
         pendingContext = undefined;
       } else if (no) {
@@ -7486,7 +7604,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
 
     } else if (intent === "order_on_behalf") {
       const orderResult = await handleOrderOnBehalf(
-        profile.id, sendPhone || replyTo, text, agentName, userNickname, pushName
+        profile.id, sendPhone || replyTo, text, agentName, userNickname, pushName, userTz
       );
       responseText  = orderResult.response;
       pendingAction = orderResult.pendingAction;
