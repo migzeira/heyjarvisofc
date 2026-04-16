@@ -4941,10 +4941,21 @@ async function handleActiveOrderSession(
   const phone55   = rawDigits.startsWith("55") ? rawDigits : `55${rawDigits}`;
   const phoneNo55 = rawDigits.startsWith("55") ? rawDigits.slice(2) : rawDigits;
 
+  // Busca sessão ativa por QUALQUER formato do telefone do estabelecimento
+  // Gera todas as variações possíveis para cobrir diferenças de formatação
+  const variants = new Set([rawDigits, phone55, phoneNo55, `+${phone55}`]);
+  // Também sem o 9 (formato antigo): 5519xxxxxxxx → 551xxxxxxxxx
+  if (phoneNo55.length === 11 && phoneNo55[2] === "9") {
+    variants.add(`55${phoneNo55.slice(0, 2)}${phoneNo55.slice(3)}`);
+  }
+  const orFilter = [...variants].map(v => `business_phone.eq.${v}`).join(",");
+
+  console.log(`[order] checking session for businessPhone variants: ${[...variants].join(", ")}`);
+
   const { data: session } = await supabase
     .from("order_sessions")
     .select("*")
-    .or(`business_phone.eq.${phone55},business_phone.eq.${phoneNo55}`)
+    .or(orFilter)
     .eq("status", "active")
     .gt("expires_at", now)
     .order("created_at", { ascending: false })
@@ -6541,12 +6552,26 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
     // ── ORDER SESSION CHECK — intercepta mensagens de estabelecimentos durante pedido ativo ──
     // Roda antes do relay e antes do fluxo normal.
     // Se a mensagem veio de um estabelecimento com order_session ativa → trata e retorna.
-    if (fallbackPhone) {
-      try {
-        const orderHandled = await handleActiveOrderSession(fallbackPhone, text);
-        if (orderHandled) { log.push("order_session_handled"); return log; }
-      } catch (orderErr) {
-        console.error("[order] handleActiveOrderSession error:", orderErr);
+    // Tenta TODOS os formatos possíveis do telefone que mandou (fallbackPhone, lid digits, replyTo digits)
+    {
+      const phoneCandidates = new Set<string>();
+      if (fallbackPhone) phoneCandidates.add(fallbackPhone);
+      // Também extrai dígitos puros do replyTo (pode ser diferente do fallbackPhone)
+      const replyDigits = replyTo.replace(/@.*$/, "").replace(/[:\D]/g, "");
+      if (replyDigits.length >= 10) phoneCandidates.add(replyDigits);
+      // LID pode conter dígitos úteis
+      if (lid) {
+        const lidDigits = lid.replace(/\D/g, "");
+        if (lidDigits.length >= 10) phoneCandidates.add(lidDigits);
+      }
+
+      for (const phoneCandidate of phoneCandidates) {
+        try {
+          const orderHandled = await handleActiveOrderSession(phoneCandidate, text);
+          if (orderHandled) { log.push("order_session_handled"); return log; }
+        } catch (orderErr) {
+          console.error("[order] handleActiveOrderSession error:", orderErr);
+        }
       }
     }
 
