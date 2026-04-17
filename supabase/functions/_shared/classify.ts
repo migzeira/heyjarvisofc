@@ -70,13 +70,22 @@ export function classifyIntent(msg: string): Intent {
     /como.{0,10}(estou|esta|ta).{0,10}orcamento/.test(m) ||
     /\bmeu(s)?\s+orcamentos?\b/.test(m) ||
     /\bminha(s)?\s+(meta|metas)\b/.test(m) ||
-    /\bstatus.{0,10}orcamento\b/.test(m) ||
+    /\bstatus.{0,10}(orcamento|limite)/.test(m) ||
     /\b(quais|ver|lista(r)?|mostra(r)?|mostre|veja|exib[ei])\s+(s[aã]o\s+)?(meus\s+|os\s+)?(orcamentos?|metas?|limites?)\b/.test(m) ||
     /\b(todos?|todas?)\s+(meus\s+|os\s+)?(orcamentos?|metas?|limites?)\b/.test(m) ||
     /\borcamento\s+de\s+(alimenta|transport|morad|saude|lazer|educa|trabalh|outros)\b/.test(m) ||
     /\borcamento\s+(atual|mensal|do\s+mes|esse\s+mes|este\s+mes)\b/.test(m) ||
     /\bmeta de (gasto|alimenta|transport|morad|saude|lazer|educa|trabalh)/.test(m) ||
-    /^orcamentos?\s*\??$/.test(m)
+    /^orcamentos?\s*\??$/.test(m) ||
+    /\bmeus\s+limites?\b/.test(m) ||
+    /\bquanto\s+(posso\s+)?gastar\b/.test(m) ||
+    /\bquanto\s+me\s+sobra\b/.test(m) ||
+    /\b(to|estou|fico)\s+dentro\s+do\s+orcamento\b/.test(m) ||
+    /\bestourei\s+(algum|o|meu)?\s*orcamento\b/.test(m) ||
+    /\btem\s+algum\s+orcamento\s+(no\s+limite|estourado|ultrapassado)\b/.test(m) ||
+    /\bresumo\s+(dos?|de)\s+(meus\s+)?orcamentos?\b/.test(m) ||
+    /\bquanto\s+tenho\s+(de|em|pra?|para)\s+(alimenta|transport|morad|saude|lazer|educa|trabalh|outros)\b/.test(m) ||
+    /\bainda\s+tenho\s+limite\s+(em|de|pra?|para)\b/.test(m)
   )
     return "budget_query";
 
