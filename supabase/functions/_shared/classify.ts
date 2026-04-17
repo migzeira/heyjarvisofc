@@ -65,17 +65,32 @@ export function classifyIntent(msg: string): Intent {
   )
     return "greeting";
 
-  // Definir orçamento/meta
+  // Consultar orçamento/meta — verificado ANTES de budget_set para evitar falso positivo
   if (
-    /maximo.{0,20}(gastar|gasto)|orcamento.{0,15}(de |pra |para )|meta.{0,15}(de |pra |para )?(gasto|gastar)|limite.{0,15}(de |pra |para )?(gasto|gastar)|definir (orcamento|meta|limite)|criar (orcamento|meta|limite)|quero gastar no maximo/.test(m)
-  )
-    return "budget_set";
-
-  // Consultar orçamento/meta
-  if (
-    /como.{0,10}(estou|esta|tá|ta).{0,10}orcamento|meu orcamento|minha meta|status.{0,10}orcamento|orcamento de|meta de (gasto|alimenta|transport|morad|saude|lazer|educa|trabalh)/.test(m)
+    /como.{0,10}(estou|esta|ta).{0,10}orcamento/.test(m) ||
+    /\bmeu(s)?\s+orcamentos?\b/.test(m) ||
+    /\bminha(s)?\s+(meta|metas)\b/.test(m) ||
+    /\bstatus.{0,10}orcamento\b/.test(m) ||
+    /\b(quais|ver|lista(r)?|mostra(r)?|mostre|veja|exib[ei])\s+(s[aã]o\s+)?(meus\s+|os\s+)?(orcamentos?|metas?|limites?)\b/.test(m) ||
+    /\b(todos?|todas?)\s+(meus\s+|os\s+)?(orcamentos?|metas?|limites?)\b/.test(m) ||
+    /\borcamento\s+de\s+(alimenta|transport|morad|saude|lazer|educa|trabalh|outros)\b/.test(m) ||
+    /\borcamento\s+(atual|mensal|do\s+mes|esse\s+mes|este\s+mes)\b/.test(m) ||
+    /\bmeta de (gasto|alimenta|transport|morad|saude|lazer|educa|trabalh)/.test(m) ||
+    /^orcamentos?\s*\??$/.test(m)
   )
     return "budget_query";
+
+  // Definir orçamento/meta — requer valor numérico ou palavra de limite explícita
+  if (
+    /maximo.{0,20}(gastar|gasto)/.test(m) ||
+    /quero gastar no maximo/.test(m) ||
+    /definir (orcamento|meta|limite)/.test(m) ||
+    /criar (orcamento|meta|limite)/.test(m) ||
+    /limite.{0,15}(de |pra |para ).{0,20}\d/.test(m) ||
+    /meta.{0,15}(de |pra |para )?(gasto|gastar).{0,20}\d/.test(m) ||
+    /orcamento.{0,15}(de |pra |para ).{0,20}\d/.test(m)
+  )
+    return "budget_set";
 
   // Criar habito
   if (
