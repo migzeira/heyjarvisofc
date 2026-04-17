@@ -142,9 +142,9 @@ export function classifyIntent(msg: string): Intent {
   // Deletar/apagar transação (antes de finance_record pra priorizar)
   // "apaga transação de 50 reais" / "remove o gasto de mercado" / "deleta a ultima transacao"
   if (
-    /\b(apaga(r)?|deleta(r)?|remove(r)?|exclui(r)?|cancela(r)?)\s+(a\s+|o\s+|as\s+|os\s+)?(ultima?|ultimo|ultimas?|ultimos)\s+(transacao|transacoes|gasto|gastos|despesa|despesas|receita|receitas|lancamento|lancamentos)\b/.test(m) ||
-    /\b(apaga(r)?|deleta(r)?|remove(r)?|exclui(r)?)\s+(a\s+|o\s+)?(transacao|gasto|despesa|receita|lancamento)\s+(de|do|da)\s+/.test(m) ||
-    /\b(apaga(r)?|deleta(r)?|remove(r)?|exclui(r)?)\s+(aquele|aquela|esse|essa)\s+(gasto|despesa|transacao|receita|lancamento)/.test(m)
+    /\b(apaga(r)?|deleta(r)?|remove(r)?|exclui(r)?|cancela(r)?)\s+(a\s+|o\s+|as\s+|os\s+|meu\s+|minha\s+)?(ultima?|ultimo|ultimas?|ultimos|recente|mais\s+recente)\s+(transacao|transacoes|gasto|gastos|despesa|despesas|receita|receitas|lancamento|lancamentos)\b/.test(m) ||
+    /\b(apaga(r)?|deleta(r)?|remove(r)?|exclui(r)?)\s+(a\s+|o\s+|meu\s+|minha\s+)?(transacao|gasto|despesa|receita|lancamento)\s+(de|do|da)\s+/.test(m) ||
+    /\b(apaga(r)?|deleta(r)?|remove(r)?|exclui(r)?)\s+(aquele|aquela|esse|essa|meu|minha)\s+(gasto|despesa|transacao|receita|lancamento)/.test(m)
   )
     return "finance_delete";
 
