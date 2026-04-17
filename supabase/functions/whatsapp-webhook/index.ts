@@ -2757,7 +2757,7 @@ async function handleAgendaEdit(
   if (!ctx.event_id) {
     const keyword = message
       .toLowerCase()
-      .replace(/mudei|muda|mude|alterei|altera|altere|remarca|remarcar|atualiza|cancela|cancelar|excluir|deletar|mover|dia|hora|horario|data|evento|compromisso|reuniao|consulta|para|pro|pra|o|a/g, " ")
+      .replace(/mudei|muda|mude|alterei|altera|altere|remarca|remarcar|atualiza|cancela|cancelar|excluir|deletar|mover|dia|hora|horario|data|evento|compromisso|reuniao|consulta|para|pro|pra|com|meu|minha|meus|minhas|o|a/g, " ")
       .replace(/\s+/g, " ")
       .trim()
       .split(" ")
@@ -7389,7 +7389,7 @@ async function processMessage(replyTo: string, text: string, lid: string | null 
       responseText = result.response;
       pendingAction = result.pendingAction;
       pendingContext = result.pendingContext;
-    } else if (intent === "agenda_edit") {
+    } else if (intent === "agenda_edit" || session?.pending_action === "agenda_edit") {
       const result = await handleAgendaEdit(profile.id, sendPhone || replyTo, text, session, userTz);
       responseText = result.response;
       pendingAction = result.pendingAction;

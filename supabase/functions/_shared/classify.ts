@@ -158,7 +158,7 @@ export function classifyIntent(msg: string): Intent {
     /\b(relat[oó]rio|resumo)\b.*(financ|gasto|despesa|receita|mes|semana|hoje|ontem)/.test(m) ||
     /^(relat[oó]rio|resumo)\s*(financeiro|do mes|da semana|de hoje|de ontem)?\s*\??$/.test(m) ||
     /\b(meus|minhas)\s+(gastos?|despesas?|receitas?|lancamentos?)\b/.test(m) ||
-    /\b(gast[oa]s?\s+)?(de\s+)?(janeiro|fevereiro|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)\b/.test(m) ||
+    /\bgast[oa]s?\s+(de\s+)?(janeiro|fevereiro|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)\b/.test(m) ||
     /\b(gasto|despesa|receita)\s+(medi[oa]|total|geral)\b/.test(m) ||
     /\b(qual|quanto|como)\s+(e|esta|foi|ficou)\s+(meu|minha)\s+(saldo|balanco|financeiro|extrato)\b/.test(m) ||
     /\bmeu\s+(saldo|balanco|extrato)\b/.test(m) ||
