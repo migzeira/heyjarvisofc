@@ -434,7 +434,23 @@ export function classifyIntent(msg: string): Intent {
     return "agenda_delete";
 
   // Editar/remarcar evento
-  if (/(mudei|muda|mude|alterei|altera|altere|remarca|remarcar|atualiza|cancela|cancelar|excluir|deletar|mover) .{0,20}(dia|hora|horario|data|evento|compromisso|reuniao|consulta)|mudei de (data|dia|horario|hora)|nao e mais (dia|hora)|e (dia|hora) \d|muda (o|a) (dia|hora|horario|data)/.test(m))
+  if (
+    /(mudei|muda|mude|alterei|altera|altere|remarca|remarcar|atualiza|cancela|cancelar|excluir|deletar|mover) .{0,20}(dia|hora|horario|data|evento|compromisso|reuniao|consulta)/.test(m) ||
+    /mudei de (data|dia|horario|hora)/.test(m) ||
+    /nao e mais (dia|hora)/.test(m) ||
+    /e (dia|hora) \d/.test(m) ||
+    /muda (o|a) (dia|hora|horario|data)/.test(m) ||
+    // Grupo 1: mudar compromisso/reunião/consulta/treino com destino explícito
+    /\b(muda|mude|altera|altere|remarca|remarque)\s+(meu|minha|o|a)\s+(compromisso|reuniao|consulta|treino|aula|evento)\s+.{2,50}\s+para\b/.test(m) ||
+    /\b(muda|mude|altera|altere)\s+o\s+horario\s+(do|da|de)\s+.{2,40}\s+para\b/.test(m) ||
+    /\b(muda|mude|altera|altere)\s+a\s+(data|hora)\s+(do|da|de)\s+.{2,40}\s+para\b/.test(m) ||
+    // Grupo 2: verbo passado indicando correção
+    /\bmarquei errado\b/.test(m) ||
+    /\bcoloquei (a hora|o horario|o dia|a data) errad/.test(m) ||
+    /\bmudei de ideia.{0,30}\bremarca\b/.test(m) ||
+    // Grupo 3: "novo horário/nova data para [evento]"
+    /\bnov[ao]\s+(horario|hora|data)\s+(para|do|da|de)\s+(meu|minha|o|a)?\s*.{2,40}/.test(m)
+  )
     return "agenda_edit";
 
   return "ai_chat";
