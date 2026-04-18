@@ -3361,6 +3361,22 @@ async function handleNotesSave(
     const noteTitle = ctx.noteTitle as string;
     const m = message.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
 
+    // Se o usuário enviou um novo "guarda X" enquanto aguardava resposta sobre lembrete,
+    // ignora o contexto pendente e salva como nota nova diretamente
+    if (/^(guarda(r)?|bota\s+ai|grava)\s*[:!,\s]/i.test(message)) {
+      const newContent = message.replace(/^(guarda(r)?|bota\s+ai|grava(r)?)\s*[:!,]?\s*/i, "").trim();
+      const { error: ne } = await supabase.from("notes").insert({
+        user_id: userId,
+        title: newContent.slice(0, 80),
+        content: newContent,
+        source: "whatsapp",
+      });
+      if (ne) throw ne;
+      syncNotion(userId, newContent).catch(() => {});
+      const noteLine = applyTemplate(tplNote, { content: newContent, user_name: userNickname });
+      return { response: noteLine };
+    }
+
     if (isReminderDecline(m) || /^(nao|não|n|dispenso|nao precisa|ta bom|tudo bem)$/.test(m)) {
       return {
         response: `Ok! A anotação está salva. 📝\nQuando precisar é só pedir: _"busca minha anotação sobre ${noteTitle}"_ 🔍`,
@@ -3411,6 +3427,20 @@ async function handleNotesSave(
   // ─── FLUXO PRINCIPAL ───
   // Analisa e classifica a nota com IA
   const analysis = await analyzeNoteContent(message);
+
+  // Comandos diretos de "guarda" → salva como nota imediatamente, sem perguntar sobre lembrete
+  if (/^(guarda(r)?|bota\s+ai|grava(r)?)\s*[:!,\s]/i.test(message)) {
+    const { error: ge } = await supabase.from("notes").insert({
+      user_id: userId,
+      title: analysis.suggestedTitle || null,
+      content: analysis.cleanContent,
+      source: "whatsapp",
+    });
+    if (ge) throw ge;
+    syncNotion(userId, analysis.cleanContent).catch(() => {});
+    const noteLine = applyTemplate(tplNote, { content: analysis.cleanContent, user_name: userNickname });
+    return { response: noteLine };
+  }
 
   // Detecta se a mensagem tem referência de tempo (indica lembrete)
   const hasTimeRef = /\b(amanha|amanhã|hoje|às \d|as \d|dia \d|\d+h\b|\d+ horas|proxim[ao]|semana|mes|daqui \d|em \d+ (min|hora|dia)|segunda|terca|quarta|quinta|sexta|sabado|domingo)\b/i.test(message);
