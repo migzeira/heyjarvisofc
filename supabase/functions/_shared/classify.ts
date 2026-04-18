@@ -305,9 +305,10 @@ export function classifyIntent(msg: string): Intent {
   // Deletar nota/anotação — ANTES de notes_save pra priorizar
   // "apaga a nota sobre X", "deleta anotacao de reunião", "remove a ultima anotacao"
   if (
-    /\b(apaga(r)?|deleta(r)?|remove(r)?|exclui(r)?)\s+(a\s+|o\s+|as\s+|os\s+)?(ultima?|ultimo|ultimas?|ultimos)\s+(nota|notas|anotacao|anotacoes)\b/.test(m) ||
-    /\b(apaga(r)?|deleta(r)?|remove(r)?|exclui(r)?)\s+(a\s+|o\s+)?(nota|anotacao)\s+(de|do|da|sobre)\s+/.test(m) ||
-    /\b(apaga(r)?|deleta(r)?|remove(r)?|exclui(r)?)\s+(aquela|essa|esta)\s+(nota|anotacao)/.test(m)
+    /\b(apaga(r)?|deleta(r)?|remove(r)?|exclui(r)?)\s+(a\s+|o\s+|as\s+|os\s+|meu\s+|minha\s+|meus\s+|minhas\s+)?(ultima?|ultimo|ultimas?|ultimos|recente|mais\s+recente)\s+(nota|notas|anotacao|anotacoes)\b/.test(m) ||
+    /\b(apaga(r)?|deleta(r)?|remove(r)?|exclui(r)?)\s+(a\s+|o\s+|meu\s+|minha\s+)?(nota|anotacao)\s+(de|do|da|sobre)\s+/.test(m) ||
+    /\b(apaga(r)?|deleta(r)?|remove(r)?|exclui(r)?)\s+(aquela|essa|esta|minha|meu)\s+(nota|anotacao)/.test(m) ||
+    /\b(apaga(r)?|deleta(r)?|remove(r)?|exclui(r)?)\s+(a\s+)?(nota\s+sobre|anotacao\s+sobre|anotacao\s+d[eo])\s+/.test(m)
   )
     return "notes_delete";
 

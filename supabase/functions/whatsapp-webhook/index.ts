@@ -1555,28 +1555,42 @@ async function handleNotesDelete(
   // Detecta "última" pra pegar a mais recente sem ambiguidade
   const wantsLast = /\b(ultima?|ultimo|ultimas?|ultimos|recente|mais recente)\b/.test(m);
 
-  // Extrai keyword após "sobre" ou "de" pra buscar por título/conteúdo
-  const keywordMatch = m.match(/(?:sobre|de|da|do)\s+([a-z0-9\s]+?)(?:\s*$|\s+(?:a|o|que|isso))/);
+  // Extrai keyword após "sobre", "de", "da", "do" ou direto após "nota/anotacao"
+  const keywordMatch = m.match(/(?:sobre|de|da|do)\s+([a-z0-9\s\-]+?)(?:\s*$|\s+(?:a|o|que|isso))/) ||
+    m.match(/(?:nota|anotacao)\s+([a-z0-9\s\-]{3,})$/);
   const keyword = keywordMatch ? keywordMatch[1].trim() : null;
+
+  // Palavras significativas (>2 chars, sem stop words)
+  const STOP = new Set(["de","da","do","dos","das","um","uma","que","pra","pro","para","com","sem","por","sobre","isso","esse","essa","meu","minha","meus","minhas","nos","nas","num","numa"]);
+  const keyWords = keyword
+    ? keyword.split(/\s+/).map(w => w.replace(/[^a-z0-9]/g, "")).filter(w => w.length > 2 && !STOP.has(w))
+    : [];
 
   let query = supabase
     .from("notes")
     .select("id, title, content, created_at, source")
     .eq("user_id", userId)
     .order("created_at", { ascending: false })
-    .limit(10);
+    .limit(30);
 
-  if (keyword && keyword.length >= 2) {
-    // Busca em title OU content (sanitiza pra evitar PostgREST injection)
-    const safeKeyword = sanitizeForFilter(keyword);
-    if (safeKeyword) {
-      query = query.or(`title.ilike.%${safeKeyword}%,content.ilike.%${safeKeyword}%`);
+  // Busca pela primeira palavra significativa para trazer candidatos
+  if (keyWords.length > 0) {
+    const anchor = sanitizeForFilter(keyWords[0]);
+    if (anchor) {
+      query = query.or(`title.ilike.%${anchor}%,content.ilike.%${anchor}%`);
     }
   }
 
-  const { data: notes, error } = await query;
+  const { data: rawNotes, error } = await query;
 
-  if (error || !notes || notes.length === 0) {
+  // Filtra client-side: mantém só notas que contenham TODAS as palavras-chave em title+content
+  const notes = (rawNotes ?? []).filter((n: any) => {
+    if (keyWords.length <= 1) return true;
+    const haystack = `${n.title ?? ""} ${n.content ?? ""}`.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9\s]/g, " ");
+    return keyWords.every(w => haystack.includes(w));
+  });
+
+  if (error || notes.length === 0) {
     if (keyword) {
       return { response: `🔍 Não encontrei nenhuma anotação com "${keyword}". Verifique no app e tente de novo.` };
     }
