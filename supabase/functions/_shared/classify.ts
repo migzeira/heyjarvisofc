@@ -430,8 +430,13 @@ export function classifyIntent(msg: string): Intent {
 
   // Deletar contato — ANTES de agenda_delete para não conflitar
   if (
-    /\b(apaga(r)?|deleta(r)?|remove(r)?|exclui(r)?|tira(r)?)\s+(o\s+|a\s+)?(contato|numero|telefone)\s+/i.test(m) ||
-    /\b(apaga(r)?|deleta(r)?|remove(r)?|exclui(r)?|tira(r)?)\s+(o\s+contato|a\s+entrada)\s+(d[oa]\s+)?[a-z]/i.test(m)
+    // Grupo base: verbo + contato/numero/telefone + nome
+    /\b(apaga(r)?|deleta(r)?|remove(r)?|exclui(r)?|tira(r)?|descarta(r)?|limpa(r)?|cancela(r)?)\s+(o\s+|a\s+)?(contato|numero|telefone)\s+/i.test(m) ||
+    /\b(apaga(r)?|deleta(r)?|remove(r)?|exclui(r)?|tira(r)?|descarta(r)?|limpa(r)?|cancela(r)?)\s+(o\s+contato|a\s+entrada)\s+(d[oa]\s+)?[a-z]/i.test(m) ||
+    // Grupo 1: possessivos — "do meu / da minha"
+    /\b(apaga(r)?|deleta(r)?|remove(r)?|exclui(r)?|tira(r)?|descarta(r)?|limpa(r)?|cancela(r)?)\s+o\s+contato\s+(d[oa]\s+)?(meu|minha)\b/i.test(m) ||
+    // Grupo 2: "da minha lista / dos meus contatos"
+    /\b(apaga(r)?|deleta(r)?|remove(r)?|exclui(r)?|tira(r)?|descarta(r)?|limpa(r)?)\s+o\s+contato\s+.{2,40}\s+(da\s+(minha\s+)?lista|dos\s+(meus\s+)?contatos)\b/i.test(m)
   )
     return "contact_delete";
 
