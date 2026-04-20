@@ -1,0 +1,70 @@
+# ─── Hey Jarvis — Apache Config (Hostinger) ──────────────────────────────
+
+# ── SPA: redireciona tudo para index.html ────────────────────────────────
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+
+  # Não redireciona arquivos e pastas que existem de fato
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+
+  # Tudo mais vai para index.html (React Router cuida do resto)
+  RewriteRule ^ index.html [QSA,L]
+</IfModule>
+
+# ── Compressão GZIP ──────────────────────────────────────────────────────
+<IfModule mod_deflate.c>
+  AddOutputFilterByType DEFLATE text/html
+  AddOutputFilterByType DEFLATE text/css
+  AddOutputFilterByType DEFLATE text/javascript
+  AddOutputFilterByType DEFLATE application/javascript
+  AddOutputFilterByType DEFLATE application/x-javascript
+  AddOutputFilterByType DEFLATE application/json
+  AddOutputFilterByType DEFLATE application/manifest+json
+  AddOutputFilterByType DEFLATE image/svg+xml
+  AddOutputFilterByType DEFLATE font/woff2
+  AddOutputFilterByType DEFLATE font/woff
+</IfModule>
+
+# ── Cache de longa duração para assets com hash no nome ─────────────────
+# Vite gera nomes como: index-Bx3kA2pQ.js — o hash muda a cada build,
+# então 1 ano de cache é seguro.
+<IfModule mod_expires.c>
+  ExpiresActive On
+
+  # Assets estáticos com hash (JS, CSS, fontes, imagens)
+  <FilesMatch "\.(js|css|woff2|woff|ttf|otf|eot|png|jpg|jpeg|webp|gif|svg|ico)$">
+    ExpiresDefault "access plus 1 year"
+    Header set Cache-Control "public, max-age=31536000, immutable"
+  </FilesMatch>
+
+  # HTML e manifest — sem cache (sempre busca versão nova)
+  <FilesMatch "\.(html|json)$">
+    ExpiresDefault "access plus 0 seconds"
+    Header set Cache-Control "no-cache, no-store, must-revalidate"
+    Header set Pragma "no-cache"
+  </FilesMatch>
+
+  # Service Worker — sem cache (precisa atualizar sempre)
+  <FilesMatch "sw\.js$">
+    ExpiresDefault "access plus 0 seconds"
+    Header set Cache-Control "no-cache, no-store, must-revalidate"
+  </FilesMatch>
+</IfModule>
+
+# ── Headers de segurança ─────────────────────────────────────────────────
+<IfModule mod_headers.c>
+  Header set X-Content-Type-Options "nosniff"
+  Header set X-Frame-Options "SAMEORIGIN"
+  Header set Referrer-Policy "strict-origin-when-cross-origin"
+</IfModule>
+
+# ── MIME types corretos ──────────────────────────────────────────────────
+<IfModule mod_mime.c>
+  AddType application/javascript .js .mjs
+  AddType text/css .css
+  AddType font/woff2 .woff2
+  AddType font/woff .woff
+  AddType application/manifest+json .webmanifest .json
+</IfModule>
